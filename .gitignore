@@ -1,0 +1,22 @@
+# Ignore build artifacts
+hub-gateway
+hub-gateway.exe
+*.exe
+
+# Go files
+go.sum
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary files
+/tmp/
+*.tmp

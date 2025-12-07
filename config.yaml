@@ -1,0 +1,15 @@
+server:
+  port: 8080
+
+services:
+  - name: "Weather Dashboard"
+    description: "Real-time weather data, charts, and statistics"
+    icon: "☀️"
+    path: "/weather"
+    enabled: true
+  
+  - name: "Network Monitor"
+    description: "SNMP monitoring for network devices"
+    icon: "🌐"
+    path: "/network"
+    enabled: false
