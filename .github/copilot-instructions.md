@@ -1,4 +1,4 @@
-# HomeServicesHub - Copilot Instructions
+# MyHomeServicesHub - Copilot Instructions
 
 This is a Go-based gateway service that provides a landing page and reverse proxy routing for multiple microservices.
 
