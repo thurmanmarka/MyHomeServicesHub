@@ -73,8 +73,8 @@ func main() {
 	// Proxy routes for services with auth headers
 	http.HandleFunc("/weather", proxyWithAuth("http://localhost:8081/"))
 	http.HandleFunc("/weather/", proxyWithAuth("http://localhost:8081/"))
-	http.HandleFunc("/api/", proxyWithAuth("http://localhost:8081/api/"))
-	http.HandleFunc("/static/", proxyWithAuth("http://localhost:8081/static/"))
+	http.HandleFunc("/api/", proxyWithAuth("http://localhost:8081/"))
+	http.HandleFunc("/static/", proxyWithAuth("http://localhost:8081/"))
 
 	// Start cleanup of expired sessions
 	go cleanupSessions()
@@ -272,6 +272,8 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			Value:    sessionToken,
 			Expires:  expiresAt,
 			HttpOnly: true,
+			Secure:   true, // Required for HTTPS
+			SameSite: http.SameSiteLaxMode,
 			Path:     "/",
 		})
 
@@ -331,6 +333,56 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 		username := ""
 		role := "guest" // Default to guest if not authenticated
 
+		// Allow SSE connections through without authentication check
+		// The page that creates the EventSource is already protected
+		if r.URL.Path == "/api/stream" || r.Header.Get("Accept") == "text/event-stream" {
+			// Pass through to backend without auth headers
+			targetPath := strings.TrimPrefix(r.URL.Path, "/weather")
+			if targetPath == "" {
+				targetPath = "/"
+			}
+			proxyURL := targetURL + strings.TrimPrefix(targetPath, "/")
+			if r.URL.RawQuery != "" {
+				proxyURL += "?" + r.URL.RawQuery
+			}
+
+			proxyReq, err := http.NewRequest(r.Method, proxyURL, r.Body)
+			if err != nil {
+				http.Error(w, "Failed to create proxy request", http.StatusInternalServerError)
+				return
+			}
+
+			// Copy headers
+			for key, values := range r.Header {
+				for _, value := range values {
+					proxyReq.Header.Add(key, value)
+				}
+			}
+
+			// Execute the proxy request
+			client := &http.Client{
+				Timeout: 0, // No timeout for SSE
+			}
+			resp, err := client.Do(proxyReq)
+			if err != nil {
+				http.Error(w, "Failed to proxy request", http.StatusBadGateway)
+				return
+			}
+			defer resp.Body.Close()
+
+			// Copy response headers
+			for key, values := range resp.Header {
+				for _, value := range values {
+					w.Header().Add(key, value)
+				}
+			}
+			w.WriteHeader(resp.StatusCode)
+
+			// Stream the response
+			io.Copy(w, resp.Body)
+			return
+		}
+
 		if config.Auth.Enabled {
 			cookie, err := r.Cookie("session_token")
 			if err != nil {
@@ -382,6 +434,8 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 		proxyReq.Header.Set("X-Hub-User", username)
 		proxyReq.Header.Set("X-Hub-Role", role)
 		proxyReq.Header.Set("X-Hub-Authenticated", "true")
+
+		log.Printf("Proxying to %s - User: %s, Role: %s", proxyURL, username, role)
 
 		// Send the request
 		client := &http.Client{
