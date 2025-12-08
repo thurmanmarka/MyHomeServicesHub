@@ -1,11 +1,19 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"fmt"
+	"html/template"
+	"io"
 	"log"
 	"net/http"
 	"os"
+	"strings"
+	"sync"
+	"time"
 
+	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 )
 
@@ -13,16 +21,35 @@ type Config struct {
 	Server struct {
 		Port int `yaml:"port"`
 	} `yaml:"server"`
+	Auth struct {
+		Enabled       bool   `yaml:"enabled"`
+		SessionSecret string `yaml:"session_secret"`
+		Users         []struct {
+			Username string `yaml:"username"`
+			Password string `yaml:"password"` // bcrypt hash
+			Role     string `yaml:"role"`
+		} `yaml:"users"`
+	} `yaml:"auth"`
 	Services []struct {
-		Name        string `yaml:"name"`
-		Description string `yaml:"description"`
-		Icon        string `yaml:"icon"`
-		Path        string `yaml:"path"`
-		Enabled     bool   `yaml:"enabled"`
+		Name         string   `yaml:"name"`
+		Description  string   `yaml:"description"`
+		Icon         string   `yaml:"icon"`
+		Path         string   `yaml:"path"`
+		Enabled      bool     `yaml:"enabled"`
+		AllowedRoles []string `yaml:"allowed_roles"`
 	} `yaml:"services"`
 }
 
+type Session struct {
+	Username  string
+	Role      string
+	ExpiresAt time.Time
+}
+
 var config Config
+var templates *template.Template
+var sessions = make(map[string]*Session)
+var sessionsMux sync.RWMutex
 
 func main() {
 	// Load configuration
@@ -30,13 +57,34 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
+	// Load templates
+	var err error
+	templates, err = template.ParseGlob("templates/*.html")
+	if err != nil {
+		log.Fatalf("Failed to load templates: %v", err)
+	}
+
 	// Setup routes
-	http.HandleFunc("/", handleLanding)
+	http.HandleFunc("/", authMiddleware(handleLanding))
+	http.HandleFunc("/login", handleLogin)
+	http.HandleFunc("/logout", handleLogout)
 	http.HandleFunc("/health", handleHealth)
+
+	// Proxy routes for services with auth headers
+	http.HandleFunc("/weather", proxyWithAuth("http://localhost:8081/"))
+	http.HandleFunc("/weather/", proxyWithAuth("http://localhost:8081/"))
+	http.HandleFunc("/api/", proxyWithAuth("http://localhost:8081/api/"))
+	http.HandleFunc("/static/", proxyWithAuth("http://localhost:8081/static/"))
+
+	// Start cleanup of expired sessions
+	go cleanupSessions()
 
 	// Start server
 	addr := fmt.Sprintf(":%d", config.Server.Port)
 	log.Printf("🏠 Home Services Hub starting on %s", addr)
+	if config.Auth.Enabled {
+		log.Printf("🔒 Authentication enabled")
+	}
 	log.Fatal(http.ListenAndServe(addr, nil))
 }
 
@@ -51,190 +99,313 @@ func loadConfig(path string) error {
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	fmt.Fprintf(w, `{"status":"ok"}`)
+	w.Write([]byte(`{"status":"ok"}`))
 }
 
 func handleLanding(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 
-	tmpl := `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Home Services Hub</title>
-    <style>
-        :root {
-            --bg: #e7edf4;
-            --panel-bg: #ffffff;
-            --panel-border: #d2d7e0;
-            --accent: #2563eb;
-            --accent-soft: #e0edff;
-            --text-main: #1f2933;
-            --text-muted: #6b7280;
-        }
-
-        [data-theme="dark"] {
-            --bg: #0f172a;
-            --panel-bg: #334155;
-            --panel-border: #475569;
-            --accent: #3b82f6;
-            --accent-soft: #1e3a8a;
-            --text-main: #f1f5f9;
-            --text-muted: #94a3b8;
-        }
-
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
-        body {
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: var(--bg);
-            color: var(--text-main);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            padding: 32px;
-            transition: background 0.3s ease, color 0.3s ease;
-        }
-
-        .container {
-            max-width: 800px;
-            width: 100%;
-            text-align: center;
-        }
-
-        h1 {
-            font-size: 3rem;
-            margin-bottom: 16px;
-        }
-
-        .subtitle {
-            color: var(--text-muted);
-            font-size: 1.1rem;
-            margin-bottom: 48px;
-        }
-
-        .modules {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-            gap: 24px;
-            margin-bottom: 48px;
-        }
-
-        .module-card {
-            background: var(--panel-bg);
-            border: 1px solid var(--panel-border);
-            border-radius: 12px;
-            padding: 32px 24px;
-            text-decoration: none;
-            color: inherit;
-            transition: all 0.2s ease;
-            cursor: pointer;
-        }
-
-        .module-card:hover {
-            transform: translateY(-4px);
-            border-color: var(--accent);
-            box-shadow: 0 12px 24px rgba(37, 99, 235, 0.12);
-        }
-
-        .module-icon {
-            font-size: 3rem;
-            margin-bottom: 16px;
-        }
-
-        .module-title {
-            font-size: 1.5rem;
-            font-weight: 600;
-            margin-bottom: 8px;
-        }
-
-        .module-description {
-            color: var(--text-muted);
-            font-size: 0.95rem;
-        }
-
-        .module-card.disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .module-card.disabled:hover {
-            transform: none;
-            border-color: var(--panel-border);
-            box-shadow: none;
-        }
-
-        .coming-soon {
-            display: inline-block;
-            background: var(--accent);
-            color: white;
-            font-size: 0.7rem;
-            padding: 2px 8px;
-            border-radius: 999px;
-            text-transform: uppercase;
-            letter-spacing: 0.05em;
-            margin-top: 8px;
-        }
-
-        .footer {
-            margin-top: 48px;
-            text-align: center;
-            color: var(--text-muted);
-            font-size: 0.9rem;
-        }
-
-        @media (max-width: 600px) {
-            .container {
-                padding: 32px 24px;
-            }
-            h1 {
-                font-size: 2rem;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>🏠 Home Services Hub</h1>
-        <p class="subtitle">Your centralized monitoring and management platform</p>
-        
-        <div class="modules">`
-
-	// Dynamically generate service cards from config
-	for _, service := range config.Services {
-		if service.Enabled {
-			tmpl += fmt.Sprintf(`
-            <a href="%s" class="module-card">
-                <div class="module-icon">%s</div>
-                <div class="module-title">%s</div>
-                <div class="module-description">%s</div>
-            </a>`, service.Path, service.Icon, service.Name, service.Description)
-		} else {
-			tmpl += fmt.Sprintf(`
-            <div class="module-card disabled">
-                <div class="module-icon">%s</div>
-                <div class="module-title">%s</div>
-                <div class="module-description">%s</div>
-                <span class="coming-soon">Coming Soon</span>
-            </div>`, service.Icon, service.Name, service.Description)
+	// Get user role from session
+	userRole := "admin" // Default if auth disabled
+	if config.Auth.Enabled {
+		cookie, err := r.Cookie("session_token")
+		if err == nil {
+			sessionsMux.RLock()
+			session, exists := sessions[cookie.Value]
+			sessionsMux.RUnlock()
+			if exists {
+				userRole = session.Role
+			}
 		}
 	}
 
-	tmpl += `
-        </div>
+	// Filter services based on user role
+	type ServiceView struct {
+		Name        string
+		Description string
+		Icon        string
+		Path        string
+		Enabled     bool
+	}
 
-        <div class="footer">
-            Home Services Hub v1.0.0 | Powered by Go & nginx
-        </div>
-    </div>
-</body>
-</html>`
+	type PageData struct {
+		Services []ServiceView
+		Username string
+		Role     string
+	}
 
-	fmt.Fprint(w, tmpl)
+	var filteredServices []ServiceView
+	for _, service := range config.Services {
+		if !service.Enabled {
+			// Show disabled services to all users
+			filteredServices = append(filteredServices, ServiceView{
+				Name:        service.Name,
+				Description: service.Description,
+				Icon:        service.Icon,
+				Path:        service.Path,
+				Enabled:     false,
+			})
+			continue
+		}
+
+		// Check if user role is allowed
+		allowed := len(service.AllowedRoles) == 0 // If no roles specified, allow all
+		for _, allowedRole := range service.AllowedRoles {
+			if allowedRole == userRole {
+				allowed = true
+				break
+			}
+		}
+
+		if allowed {
+			filteredServices = append(filteredServices, ServiceView{
+				Name:        service.Name,
+				Description: service.Description,
+				Icon:        service.Icon,
+				Path:        service.Path,
+				Enabled:     true,
+			})
+		}
+	}
+
+	// Get username from session
+	username := ""
+	if config.Auth.Enabled {
+		cookie, _ := r.Cookie("session_token")
+		if cookie != nil {
+			sessionsMux.RLock()
+			session, exists := sessions[cookie.Value]
+			sessionsMux.RUnlock()
+			if exists {
+				username = session.Username
+			}
+		}
+	}
+
+	data := PageData{
+		Services: filteredServices,
+		Username: username,
+		Role:     userRole,
+	}
+
+	if err := templates.ExecuteTemplate(w, "index.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		log.Printf("Template error: %v", err)
+	}
+}
+
+// Authentication middleware
+func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !config.Auth.Enabled {
+			next(w, r)
+			return
+		}
+
+		cookie, err := r.Cookie("session_token")
+		if err != nil {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+
+		sessionsMux.RLock()
+		session, exists := sessions[cookie.Value]
+		sessionsMux.RUnlock()
+
+		if !exists || session.ExpiresAt.Before(time.Now()) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
+// Handle login page and form submission
+func handleLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method == "GET" {
+		w.Header().Set("Content-Type", "text/html")
+		if err := templates.ExecuteTemplate(w, "login.html", nil); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if r.Method == "POST" {
+		username := r.FormValue("username")
+		password := r.FormValue("password")
+
+		// Validate credentials
+		var userRole string
+		authenticated := false
+		for _, user := range config.Auth.Users {
+			if user.Username == username {
+				err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
+				if err == nil {
+					authenticated = true
+					userRole = user.Role
+					break
+				}
+			}
+		}
+
+		if !authenticated {
+			w.Header().Set("Content-Type", "text/html")
+			templates.ExecuteTemplate(w, "login.html", map[string]string{"Error": "Invalid credentials"})
+			return
+		}
+
+		// Create session
+		sessionToken := generateSessionToken()
+		expiresAt := time.Now().Add(24 * time.Hour)
+
+		sessionsMux.Lock()
+		sessions[sessionToken] = &Session{
+			Username:  username,
+			Role:      userRole,
+			ExpiresAt: expiresAt,
+		}
+		sessionsMux.Unlock()
+
+		http.SetCookie(w, &http.Cookie{
+			Name:     "session_token",
+			Value:    sessionToken,
+			Expires:  expiresAt,
+			HttpOnly: true,
+			Path:     "/",
+		})
+
+		log.Printf("User logged in: %s", username)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+}
+
+// Handle logout
+func handleLogout(w http.ResponseWriter, r *http.Request) {
+	cookie, err := r.Cookie("session_token")
+	if err == nil {
+		sessionsMux.Lock()
+		delete(sessions, cookie.Value)
+		sessionsMux.Unlock()
+	}
+
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_token",
+		Value:    "",
+		Expires:  time.Now().Add(-1 * time.Hour),
+		HttpOnly: true,
+		Path:     "/",
+	})
+
+	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// Generate random session token
+func generateSessionToken() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.URLEncoding.EncodeToString(b)
+}
+
+// Cleanup expired sessions periodically
+func cleanupSessions() {
+	ticker := time.NewTicker(1 * time.Hour)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		sessionsMux.Lock()
+		for token, session := range sessions {
+			if session.ExpiresAt.Before(time.Now()) {
+				delete(sessions, token)
+			}
+		}
+		sessionsMux.Unlock()
+	}
+}
+
+// Proxy requests to backend services with auth headers
+func proxyWithAuth(targetURL string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Get user info from session
+		username := ""
+		role := "guest" // Default to guest if not authenticated
+
+		if config.Auth.Enabled {
+			cookie, err := r.Cookie("session_token")
+			if err != nil {
+				// No session, redirect to login
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				return
+			}
+
+			sessionsMux.RLock()
+			session, exists := sessions[cookie.Value]
+			sessionsMux.RUnlock()
+
+			if !exists || session.ExpiresAt.Before(time.Now()) {
+				// Invalid or expired session
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				return
+			}
+
+			username = session.Username
+			role = session.Role
+		}
+
+		// Build the target URL
+		targetPath := strings.TrimPrefix(r.URL.Path, "/weather")
+		if targetPath == "" {
+			targetPath = "/"
+		}
+		proxyURL := targetURL + strings.TrimPrefix(targetPath, "/")
+		if r.URL.RawQuery != "" {
+			proxyURL += "?" + r.URL.RawQuery
+		}
+
+		// Create the proxy request
+		proxyReq, err := http.NewRequest(r.Method, proxyURL, r.Body)
+		if err != nil {
+			http.Error(w, "Failed to create proxy request", http.StatusInternalServerError)
+			log.Printf("Proxy error: %v", err)
+			return
+		}
+
+		// Copy headers
+		for key, values := range r.Header {
+			for _, value := range values {
+				proxyReq.Header.Add(key, value)
+			}
+		}
+
+		// Add auth headers for the backend service
+		proxyReq.Header.Set("X-Hub-User", username)
+		proxyReq.Header.Set("X-Hub-Role", role)
+		proxyReq.Header.Set("X-Hub-Authenticated", "true")
+
+		// Send the request
+		client := &http.Client{
+			Timeout: 30 * time.Second,
+		}
+		resp, err := client.Do(proxyReq)
+		if err != nil {
+			http.Error(w, "Failed to reach backend service", http.StatusBadGateway)
+			log.Printf("Proxy error: %v", err)
+			return
+		}
+		defer resp.Body.Close()
+
+		// Copy response headers
+		for key, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(key, value)
+			}
+		}
+
+		// Copy status code
+		w.WriteHeader(resp.StatusCode)
+
+		// Copy response body
+		io.Copy(w, resp.Body)
+	}
 }

@@ -1,15 +1,28 @@
 server:
   port: 8080
 
+auth:
+  enabled: true
+  session_secret: "change-this-to-a-random-secret-key"
+  users:
+    - username: "admin"
+      password: "$2a$10$rJ1OUj/.XtXBV3e9/e0uZOOHx5zBy2uvGgn8ra.JrsKM2gBXMIfVy"  # admin123
+      role: "admin"
+    - username: "guest"
+      password: "$2a$10$RbF5HX7ALzMt5Mug1m5kF.JxcSMcQDnxCGWnI0.qgA7LbqAssR9TS"  # guest123
+      role: "guest"
+
 services:
   - name: "Weather Dashboard"
     description: "Real-time weather data, charts, and statistics"
     icon: "☀️"
     path: "/weather"
     enabled: true
+    allowed_roles: ["admin", "guest"]  # Both admin and guest can access
   
   - name: "Network Monitor"
     description: "SNMP monitoring for network devices"
     icon: "🌐"
     path: "/network"
     enabled: false
+    allowed_roles: ["admin"]  # Only admin can access
