@@ -6,6 +6,9 @@ hub-gateway.exe
 # Go files
 go.sum
 
+# Configuration files with sensitive data
+config.yaml
+
 # IDE
 .vscode/
 .idea/
