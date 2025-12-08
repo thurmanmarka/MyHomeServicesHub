@@ -148,6 +148,36 @@ sudo update-ca-certificates
 
 ## Adding New Services
 
+### Integrating MyWeatherDash
+
+MyWeatherDash can run as a standalone service or be integrated with the hub:
+
+1. **Deploy MyWeatherDash on port 8081:**
+   ```bash
+   cd ~/MyWeatherDash
+   # Edit config.yaml to set port: 8081
+   nano config.yaml
+   
+   # Build and install
+   go build -o weatherdash
+   sudo cp weatherdash /home/weatherdash/weatherdash/
+   sudo systemctl restart weatherdash
+   ```
+
+2. **Verify it's running:**
+   ```bash
+   curl http://localhost:8081/api/ping
+   ```
+
+3. **Hub automatically routes to it:**
+   - Main dashboard: `https://your-pi/weather`
+   - API endpoints: `https://your-pi/api/...`
+   - Static files: `https://your-pi/static/...`
+
+The hub's nginx.conf is already configured to proxy requests to MyWeatherDash on port 8081.
+
+### Adding Other Services
+
 1. Update `config.yaml` with new service details
 2. Deploy your service to run on a unique port (e.g., 8083)
 3. Update `nginx.conf` to add routing for the new service
