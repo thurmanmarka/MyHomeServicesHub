@@ -81,6 +81,10 @@ func main() {
 	http.HandleFunc("/api/", proxyWithAuth("http://localhost:8081/"))
 	http.HandleFunc("/static/", proxyWithAuth("http://localhost:8081/"))
 
+	// SNMP Monitor routes
+	http.HandleFunc("/snmp", proxyWithAuth("http://localhost:8082/"))
+	http.HandleFunc("/snmp/", proxyWithAuth("http://localhost:8082/"))
+
 	// Start cleanup of expired sessions
 	go cleanupSessions()
 
@@ -563,7 +567,14 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 		}
 
 		// Build the target URL
-		targetPath := strings.TrimPrefix(r.URL.Path, "/weather")
+		var targetPath string
+		if strings.HasPrefix(r.URL.Path, "/snmp/") {
+			targetPath = strings.TrimPrefix(r.URL.Path, "/snmp")
+		} else if strings.HasPrefix(r.URL.Path, "/weather/") {
+			targetPath = strings.TrimPrefix(r.URL.Path, "/weather")
+		} else {
+			targetPath = r.URL.Path
+		}
 		if targetPath == "" {
 			targetPath = "/"
 		}
@@ -607,10 +618,20 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 		defer resp.Body.Close()
 
 		// Copy response headers
+		isJS := strings.HasSuffix(r.URL.Path, ".js") || strings.Contains(r.URL.Path, ".js?")
 		for key, values := range resp.Header {
+			// If JS file, override Content-Type
+			if isJS && strings.ToLower(key) == "content-type" {
+				w.Header().Set("Content-Type", "application/javascript")
+				continue
+			}
 			for _, value := range values {
 				w.Header().Add(key, value)
 			}
+		}
+		// If JS file and backend didn't set Content-Type, set it
+		if isJS && w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", "application/javascript")
 		}
 
 		// Copy status code

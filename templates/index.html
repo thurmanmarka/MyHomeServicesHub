@@ -217,17 +217,17 @@
     <div class="container">
         <h1>🏠 My Home Services Hub</h1>
         <p class="subtitle">Your centralized monitoring and management platform</p>
-        
-        <div class="modules">
+
+        <div class="modules" id="modulesContainer">
             {{range .Services}}
                 {{if .Enabled}}
-                    <a href="{{.Path}}" class="module-card">
+                    <a href="{{.Path}}" class="module-card" data-service="{{.Path}}">
                         <div class="module-icon">{{.Icon}}</div>
                         <div class="module-title">{{.Name}}</div>
                         <div class="module-description">{{.Description}}</div>
                     </a>
                 {{else}}
-                    <div class="module-card disabled">
+                    <div class="module-card disabled" data-service="{{.Path}}">
                         <div class="module-icon">{{.Icon}}</div>
                         <div class="module-title">{{.Name}}</div>
                         <div class="module-description">{{.Description}}</div>
@@ -236,6 +236,28 @@
                 {{end}}
             {{end}}
         </div>
+
+        <script>
+        function checkServiceHealth() {
+            const services = Array.from(document.querySelectorAll('[data-service]'));
+            services.forEach(card => {
+                let path = card.getAttribute('data-service');
+                let healthUrl = '';
+                if (path.startsWith('/weather')) healthUrl = '/weather/health';
+                else if (path.startsWith('/snmp')) healthUrl = '/snmp/health';
+                else healthUrl = path + '/health';
+                fetch(healthUrl, {cache: 'no-store'})
+                    .then(res => res.ok ? res.json() : Promise.reject())
+                    .then(data => {
+                        if (!data || data.status !== 'ok') card.style.display = 'none';
+                        else card.style.display = '';
+                    })
+                    .catch(() => { card.style.display = 'none'; });
+            });
+        }
+        checkServiceHealth();
+        setInterval(checkServiceHealth, 10000);
+        </script>
 
         <div class="footer">
             My Home Services Hub v1.0.0 | Powered by Go & nginx
