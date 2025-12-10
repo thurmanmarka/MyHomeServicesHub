@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Home Services Hub</title>
+    <title>Login - My Home Services Hub</title>
     <style>
         :root {
             --bg: #0f172a;
@@ -108,6 +108,49 @@
             background: var(--accent-hover);
         }
 
+        .btn-guest {
+            width: 100%;
+            padding: 12px;
+            background: transparent;
+            color: var(--text-main);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 12px;
+        }
+
+        .btn-guest:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        .divider {
+            text-align: center;
+            margin: 24px 0;
+            position: relative;
+        }
+
+        .divider::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 0;
+            right: 0;
+            height: 1px;
+            background: var(--panel-border);
+        }
+
+        .divider span {
+            background: var(--panel-bg);
+            padding: 0 16px;
+            position: relative;
+            color: var(--text-muted);
+            font-size: 0.875rem;
+        }
+
         .error {
             background: rgba(239, 68, 68, 0.1);
             border: 1px solid var(--error);
@@ -130,7 +173,7 @@
         <div class="login-header">
             <div class="login-icon">🔒</div>
             <h1>Welcome Back</h1>
-            <p class="subtitle">Sign in to access Home Services Hub</p>
+            <p class="subtitle">Sign in to access My Home Services Hub</p>
         </div>
 
         {{if .Error}}
@@ -151,6 +194,16 @@
             </div>
 
             <button type="submit" class="btn">Sign In</button>
+        </form>
+
+        <div class="divider">
+            <span>or</span>
+        </div>
+
+        <form method="POST" action="/login">
+            <input type="hidden" name="username" value="guest">
+            <input type="hidden" name="password" value="guest123">
+            <button type="submit" class="btn-guest">👤 Continue as Guest</button>
         </form>
     </div>
 </body>

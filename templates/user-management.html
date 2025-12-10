@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management - My Home Services Hub</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: #0f172a;
+            color: #f1f5f9;
+            min-height: 100vh;
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+            padding-bottom: 16px;
+            border-bottom: 1px solid #334155;
+        }
+
+        h1 {
+            font-size: 2rem;
+        }
+
+        .back-link {
+            color: #3b82f6;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .add-user-section {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 32px;
+        }
+
+        h2 {
+            font-size: 1.25rem;
+            margin-bottom: 16px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr auto;
+            gap: 12px;
+            align-items: end;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        label {
+            font-size: 0.875rem;
+            font-weight: 500;
+            color: #94a3b8;
+        }
+
+        input, select {
+            padding: 10px 14px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            color: #f1f5f9;
+            font-size: 1rem;
+        }
+
+        input:focus, select:focus {
+            outline: none;
+            border-color: #3b82f6;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn:hover {
+            background: #2563eb;
+        }
+
+        .btn-danger {
+            background: #ef4444;
+        }
+
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+
+        .users-table {
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 12px;
+            overflow: hidden;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        thead {
+            background: #334155;
+        }
+
+        th {
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            color: #94a3b8;
+        }
+
+        td {
+            padding: 16px;
+            border-top: 1px solid #334155;
+        }
+
+        .role-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .role-admin {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .role-user {
+            background: #10b981;
+            color: white;
+        }
+
+        .role-guest {
+            background: #6b7280;
+            color: white;
+        }
+
+        .actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-small {
+            padding: 6px 12px;
+            font-size: 0.875rem;
+        }
+
+        select.role-select {
+            padding: 6px 12px;
+            font-size: 0.875rem;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+
+            table {
+                font-size: 0.875rem;
+            }
+
+            td, th {
+                padding: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>👥 User Management</h1>
+            <a href="/" class="back-link">← Back to Home</a>
+        </header>
+
+        <div class="add-user-section">
+            <h2>Add New User</h2>
+            <form method="POST" action="/admin/users/add">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="username">Username</label>
+                        <input type="text" id="username" name="username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="password">Password</label>
+                        <input type="password" id="password" name="password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="role">Role</label>
+                        <select id="role" name="role" required>
+                            <option value="user">User</option>
+                            <option value="admin">Admin</option>
+                            <option value="guest">Guest</option>
+                        </select>
+                    </div>
+                    <button type="submit" class="btn">Add User</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="users-table">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Username</th>
+                        <th>Role</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {{range .Users}}
+                    <tr>
+                        <td>
+                            {{.Username}}
+                            {{if or (eq .Username "admin") (eq .Username "guest")}}
+                            <span style="color: #94a3b8; font-size: 0.75rem; margin-left: 8px;">🔒 Protected</span>
+                            {{end}}
+                        </td>
+                        <td>
+                            <span class="role-badge role-{{.Role}}">{{.Role}}</span>
+                        </td>
+                        <td>
+                            <div class="actions">
+                                {{if or (eq .Username "admin") (eq .Username "guest")}}
+                                <select class="role-select" disabled style="opacity: 0.5;">
+                                    <option>{{.Role}}</option>
+                                </select>
+                                <button class="btn btn-danger btn-small" disabled style="opacity: 0.5;">Delete</button>
+                                {{else}}
+                                <form method="POST" action="/admin/users/update" style="display: inline;">
+                                    <input type="hidden" name="username" value="{{.Username}}">
+                                    <select name="role" class="role-select" onchange="this.form.submit()">
+                                        <option value="admin" {{if eq .Role "admin"}}selected{{end}}>Admin</option>
+                                        <option value="user" {{if eq .Role "user"}}selected{{end}}>User</option>
+                                        <option value="guest" {{if eq .Role "guest"}}selected{{end}}>Guest</option>
+                                    </select>
+                                </form>
+                                <form method="POST" action="/admin/users/delete" style="display: inline;" onsubmit="return confirm('Delete user {{.Username}}?')">
+                                    <input type="hidden" name="username" value="{{.Username}}">
+                                    <button type="submit" class="btn btn-danger btn-small">Delete</button>
+                                </form>
+                                {{end}}
+                            </div>
+                        </td>
+                    </tr>
+                    {{end}}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

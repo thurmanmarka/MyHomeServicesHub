@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Home Services Hub</title>
+    <title>My Home Services Hub</title>
     <style>
         :root {
             --bg: #e7edf4;
@@ -204,12 +204,18 @@
             <span>👤 {{.Username}}</span>
             <span class="role-tag {{if eq .Role "guest"}}guest{{end}}">{{.Role}}</span>
         </div>
+        {{if eq .Role "admin"}}
+        <a href="/change-password" class="logout-btn">Change Password</a>
+        <a href="/admin/users" class="logout-btn">👥 Users</a>
+        {{else if eq .Role "user"}}
+        <a href="/change-password" class="logout-btn">Change Password</a>
+        {{end}}
         <a href="/logout" class="logout-btn">Logout</a>
     </div>
     {{end}}
     
     <div class="container">
-        <h1>🏠 Home Services Hub</h1>
+        <h1>🏠 My Home Services Hub</h1>
         <p class="subtitle">Your centralized monitoring and management platform</p>
         
         <div class="modules">
@@ -232,7 +238,7 @@
         </div>
 
         <div class="footer">
-            Home Services Hub v1.0.0 | Powered by Go & nginx
+            My Home Services Hub v1.0.0 | Powered by Go & nginx
         </div>
     </div>
 </body>

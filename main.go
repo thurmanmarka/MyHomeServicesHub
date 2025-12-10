@@ -68,6 +68,11 @@ func main() {
 	http.HandleFunc("/", authMiddleware(handleLanding))
 	http.HandleFunc("/login", handleLogin)
 	http.HandleFunc("/logout", handleLogout)
+	http.HandleFunc("/change-password", authMiddleware(handleChangePassword))
+	http.HandleFunc("/admin/users", adminOnly(handleUserManagement))
+	http.HandleFunc("/admin/users/add", adminOnly(handleAddUser))
+	http.HandleFunc("/admin/users/delete", adminOnly(handleDeleteUser))
+	http.HandleFunc("/admin/users/update", adminOnly(handleUpdateUser))
 	http.HandleFunc("/health", handleHealth)
 
 	// Proxy routes for services with auth headers
@@ -94,6 +99,14 @@ func loadConfig(path string) error {
 		return err
 	}
 	return yaml.Unmarshal(data, &config)
+}
+
+func saveConfig(path string) error {
+	data, err := yaml.Marshal(&config)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0600)
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -221,6 +234,38 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// Admin-only middleware
+func adminOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !config.Auth.Enabled {
+			next(w, r)
+			return
+		}
+
+		cookie, err := r.Cookie("session_token")
+		if err != nil {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+
+		sessionsMux.RLock()
+		session, exists := sessions[cookie.Value]
+		sessionsMux.RUnlock()
+
+		if !exists || session.ExpiresAt.Before(time.Now()) {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+
+		if session.Role != "admin" {
+			http.Error(w, "Forbidden: Admin access required", http.StatusForbidden)
+			return
+		}
+
+		next(w, r)
+	}
+}
+
 // Handle login page and form submission
 func handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method == "GET" {
@@ -267,12 +312,15 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		}
 		sessionsMux.Unlock()
 
+		// Detect if we're behind HTTPS proxy (X-Forwarded-Proto header)
+		isHTTPS := r.Header.Get("X-Forwarded-Proto") == "https" || r.TLS != nil
+
 		http.SetCookie(w, &http.Cookie{
 			Name:     "session_token",
 			Value:    sessionToken,
 			Expires:  expiresAt,
 			HttpOnly: true,
-			Secure:   true, // Required for HTTPS
+			Secure:   isHTTPS, // Secure only for HTTPS
 			SameSite: http.SameSiteLaxMode,
 			Path:     "/",
 		})
@@ -301,6 +349,115 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 	})
 
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+// Handle change password
+func handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	// Get current user from session
+	cookie, err := r.Cookie("session_token")
+	if err != nil {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	sessionsMux.RLock()
+	session, exists := sessions[cookie.Value]
+	sessionsMux.RUnlock()
+
+	if !exists {
+		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		return
+	}
+
+	if r.Method == "GET" {
+		w.Header().Set("Content-Type", "text/html")
+		data := map[string]string{
+			"Username": session.Username,
+		}
+		if err := templates.ExecuteTemplate(w, "change-password.html", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	if r.Method == "POST" {
+		currentPassword := r.FormValue("current_password")
+		newPassword := r.FormValue("new_password")
+		confirmPassword := r.FormValue("confirm_password")
+
+		// Validate inputs
+		if newPassword != confirmPassword {
+			w.Header().Set("Content-Type", "text/html")
+			data := map[string]string{
+				"Username": session.Username,
+				"Error":    "New passwords do not match",
+			}
+			templates.ExecuteTemplate(w, "change-password.html", data)
+			return
+		}
+
+		if len(newPassword) < 8 {
+			w.Header().Set("Content-Type", "text/html")
+			data := map[string]string{
+				"Username": session.Username,
+				"Error":    "New password must be at least 8 characters",
+			}
+			templates.ExecuteTemplate(w, "change-password.html", data)
+			return
+		}
+
+		// Verify current password
+		var userIndex int
+		var userFound bool
+		for i, user := range config.Auth.Users {
+			if user.Username == session.Username {
+				err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword))
+				if err == nil {
+					userIndex = i
+					userFound = true
+					break
+				}
+			}
+		}
+
+		if !userFound {
+			w.Header().Set("Content-Type", "text/html")
+			data := map[string]string{
+				"Username": session.Username,
+				"Error":    "Current password is incorrect",
+			}
+			templates.ExecuteTemplate(w, "change-password.html", data)
+			return
+		}
+
+		// Hash new password
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+		if err != nil {
+			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+			return
+		}
+
+		// Update config in memory
+		config.Auth.Users[userIndex].Password = string(hashedPassword)
+
+		// Save to config file
+		if err := saveConfig("config.yaml"); err != nil {
+			log.Printf("Failed to save config: %v", err)
+			http.Error(w, "Failed to save new password", http.StatusInternalServerError)
+			return
+		}
+
+		log.Printf("Password changed for user: %s", session.Username)
+
+		// Show success page
+		w.Header().Set("Content-Type", "text/html")
+		data := map[string]string{
+			"Username": session.Username,
+			"Success":  "Password changed successfully",
+		}
+		templates.ExecuteTemplate(w, "change-password.html", data)
+		return
+	}
 }
 
 // Generate random session token
@@ -462,4 +619,199 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 		// Copy response body
 		io.Copy(w, resp.Body)
 	}
+}
+
+// User management handlers
+
+func handleUserManagement(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html")
+
+	cookie, _ := r.Cookie("session_token")
+	sessionsMux.RLock()
+	session, _ := sessions[cookie.Value]
+	sessionsMux.RUnlock()
+
+	data := struct {
+		Username string
+		Users    []struct {
+			Username string
+			Role     string
+		}
+	}{
+		Username: session.Username,
+	}
+
+	// Build user list (exclude passwords)
+	for _, user := range config.Auth.Users {
+		data.Users = append(data.Users, struct {
+			Username string
+			Role     string
+		}{
+			Username: user.Username,
+			Role:     user.Role,
+		})
+	}
+
+	if err := templates.ExecuteTemplate(w, "user-management.html", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
+}
+
+func handleAddUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	username := r.FormValue("username")
+	password := r.FormValue("password")
+	role := r.FormValue("role")
+
+	// Validate inputs
+	if username == "" || password == "" || role == "" {
+		http.Error(w, "All fields required", http.StatusBadRequest)
+		return
+	}
+
+	if role != "admin" && role != "user" && role != "guest" {
+		http.Error(w, "Invalid role", http.StatusBadRequest)
+		return
+	}
+
+	// Check if user already exists
+	for _, user := range config.Auth.Users {
+		if user.Username == username {
+			http.Error(w, "User already exists", http.StatusConflict)
+			return
+		}
+	}
+
+	// Hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, "Failed to hash password", http.StatusInternalServerError)
+		return
+	}
+
+	// Add user to config
+	config.Auth.Users = append(config.Auth.Users, struct {
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
+		Role     string `yaml:"role"`
+	}{
+		Username: username,
+		Password: string(hashedPassword),
+		Role:     role,
+	})
+
+	// Save config
+	if err := saveConfig("config.yaml"); err != nil {
+		log.Printf("Failed to save config: %v", err)
+		http.Error(w, "Failed to save user", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("User added: %s (role: %s)", username, role)
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
+}
+
+func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	username := r.FormValue("username")
+
+	// Don't allow deleting yourself
+	cookie, _ := r.Cookie("session_token")
+	sessionsMux.RLock()
+	session, _ := sessions[cookie.Value]
+	sessionsMux.RUnlock()
+
+	if session.Username == username {
+		http.Error(w, "Cannot delete yourself", http.StatusBadRequest)
+		return
+	}
+
+	// Don't allow deleting protected users
+	if username == "admin" || username == "guest" {
+		http.Error(w, "Cannot delete protected user", http.StatusBadRequest)
+		return
+	} // Find and remove user
+	found := false
+	newUsers := []struct {
+		Username string `yaml:"username"`
+		Password string `yaml:"password"`
+		Role     string `yaml:"role"`
+	}{}
+
+	for _, user := range config.Auth.Users {
+		if user.Username != username {
+			newUsers = append(newUsers, user)
+		} else {
+			found = true
+		}
+	}
+
+	if !found {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	config.Auth.Users = newUsers
+
+	// Save config
+	if err := saveConfig("config.yaml"); err != nil {
+		log.Printf("Failed to save config: %v", err)
+		http.Error(w, "Failed to delete user", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("User deleted: %s", username)
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
+}
+
+func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	username := r.FormValue("username")
+	newRole := r.FormValue("role")
+
+	// Don't allow changing protected users' roles
+	if username == "admin" || username == "guest" {
+		http.Error(w, "Cannot modify protected user", http.StatusBadRequest)
+		return
+	}
+
+	if newRole != "admin" && newRole != "user" && newRole != "guest" {
+		http.Error(w, "Invalid role", http.StatusBadRequest)
+		return
+	} // Find and update user
+	found := false
+	for i, user := range config.Auth.Users {
+		if user.Username == username {
+			config.Auth.Users[i].Role = newRole
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		http.Error(w, "User not found", http.StatusNotFound)
+		return
+	}
+
+	// Save config
+	if err := saveConfig("config.yaml"); err != nil {
+		log.Printf("Failed to save config: %v", err)
+		http.Error(w, "Failed to update user", http.StatusInternalServerError)
+		return
+	}
+
+	log.Printf("User updated: %s -> role: %s", username, newRole)
+	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }
