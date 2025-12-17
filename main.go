@@ -81,6 +81,10 @@ func main() {
 	http.HandleFunc("/api/", proxyWithAuth("http://localhost:8081/"))
 	http.HandleFunc("/static/", proxyWithAuth("http://localhost:8081/"))
 
+	// MyWatchfulWoo-Woos routes
+	http.HandleFunc("/woo", proxyWithAuth("http://localhost:8083/"))
+	http.HandleFunc("/woo/", proxyWithAuth("http://localhost:8083/"))
+
 	// SNMP Monitor routes
 	http.HandleFunc("/snmp", proxyWithAuth("http://localhost:8082/"))
 	http.HandleFunc("/snmp/", proxyWithAuth("http://localhost:8082/"))

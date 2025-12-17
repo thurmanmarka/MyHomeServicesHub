@@ -4,10 +4,11 @@ After=network.target
 
 [Service]
 Type=simple
-User=hub
-Group=hub
-WorkingDirectory=/home/hub/hub
-ExecStart=/home/hub/hub/hub-gateway
+User=myhomeservices
+Group=myhomeservices
+WorkingDirectory=/home/myhomeservices/hub
+ExecStart=/home/myhomeservices/hub/hub-gateway
+ReadWritePaths=/home/myhomeservices/hub
 Restart=on-failure
 RestartSec=5s
 

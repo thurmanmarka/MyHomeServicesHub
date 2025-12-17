@@ -4,7 +4,7 @@
 
 set -e
 
-INSTALL_USER="hub"
+INSTALL_USER="myhomeservices"
 INSTALL_DIR="/home/$INSTALL_USER/hub"
 SERVICE_NAME="hub-gateway"
 
