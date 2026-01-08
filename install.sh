@@ -5,7 +5,7 @@
 set -e
 
 INSTALL_USER="myhomeservices"
-INSTALL_DIR="/home/$INSTALL_USER/hub"
+INSTALL_DIR="/home/myhomeservices/hub"
 SERVICE_NAME="hub-gateway"
 
 echo "🏠 Home Services Hub Installation Script"
@@ -36,8 +36,8 @@ GOOS=linux GOARCH=arm64 go build -o hub-gateway main.go
 echo ""
 echo "📁 Creating installation directory..."
 mkdir -p $INSTALL_DIR
-cp hub-gateway $INSTALL_DIR/
-cp config.yaml $INSTALL_DIR/
+cp HomeServicesHub /home/myhomeservices/hub/
+cp config.yaml /home/myhomeservices/hub/
 cp hub-gateway.service /tmp/
 
 echo ""
