@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -361,9 +362,17 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 
 // Handle change password
 func handleChangePassword(w http.ResponseWriter, r *http.Request) {
+	expectJSON := strings.Contains(r.Header.Get("Accept"), "application/json")
+
 	// Get current user from session
 	cookie, err := r.Cookie("session_token")
 	if err != nil {
+		if expectJSON {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "not authenticated"})
+			return
+		}
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -373,6 +382,12 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	sessionsMux.RUnlock()
 
 	if !exists {
+		if expectJSON {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "session expired"})
+			return
+		}
 		http.Redirect(w, r, "/login", http.StatusSeeOther)
 		return
 	}
@@ -395,6 +410,12 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 
 		// Validate inputs
 		if newPassword != confirmPassword {
+			if expectJSON {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "New passwords do not match"})
+				return
+			}
 			w.Header().Set("Content-Type", "text/html")
 			data := map[string]string{
 				"Username": session.Username,
@@ -405,6 +426,12 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if len(newPassword) < 8 {
+			if expectJSON {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "New password must be at least 8 characters"})
+				return
+			}
 			w.Header().Set("Content-Type", "text/html")
 			data := map[string]string{
 				"Username": session.Username,
@@ -429,6 +456,12 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if !userFound {
+			if expectJSON {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "Current password is incorrect"})
+				return
+			}
 			w.Header().Set("Content-Type", "text/html")
 			data := map[string]string{
 				"Username": session.Username,
@@ -441,6 +474,12 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		// Hash new password
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
 		if err != nil {
+			if expectJSON {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "Failed to hash password"})
+				return
+			}
 			http.Error(w, "Failed to hash password", http.StatusInternalServerError)
 			return
 		}
@@ -451,11 +490,23 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		// Save to config file
 		if err := saveConfig("config.yaml"); err != nil {
 			log.Printf("Failed to save config: %v", err)
+			if expectJSON {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "Failed to save new password"})
+				return
+			}
 			http.Error(w, "Failed to save new password", http.StatusInternalServerError)
 			return
 		}
 
 		log.Printf("Password changed for user: %s", session.Username)
+
+		if expectJSON {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+			return
+		}
 
 		// Show success page
 		w.Header().Set("Content-Type", "text/html")

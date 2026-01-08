@@ -5,6 +5,40 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>User Management - My Home Services Hub</title>
     <style>
+        :root {
+            --bg: #e7edf4;
+            --page-bg: #f5f7fb;
+            --panel-bg: #ffffff;
+            --panel-border: #d2d7e0;
+            --accent: #2563eb;
+            --accent-soft: #e0edff;
+            --text-main: #1f2933;
+            --text-muted: #6b7280;
+            --gradient-start: #d9e6ff;
+            --gradient-mid1: #e7edf4;
+            --gradient-mid2: #dde7f4;
+            --gradient-end: #d3e0f0;
+            --danger: #ef4444;
+            --danger-hover: #dc2626;
+        }
+
+        [data-theme="dark"] {
+            --bg: #0f172a;
+            --page-bg: #1e293b;
+            --panel-bg: #334155;
+            --panel-border: #475569;
+            --accent: #3b82f6;
+            --accent-soft: #1e3a8a;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --gradient-start: #1e293b;
+            --gradient-mid1: #0f172a;
+            --gradient-mid2: #1e293b;
+            --gradient-end: #334155;
+            --danger: #f87171;
+            --danger-hover: #ef4444;
+        }
+
         * {
             box-sizing: border-box;
             margin: 0;
@@ -13,14 +47,28 @@
 
         body {
             font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: #0f172a;
-            color: #f1f5f9;
+            background: radial-gradient(circle at top left, var(--gradient-start), var(--gradient-mid1) 40%, var(--gradient-mid2) 70%, var(--gradient-end) 100%);
+            color: var(--text-main);
             min-height: 100vh;
-            padding: 24px;
+            padding: 32px;
+            display: flex;
+            justify-content: center;
+            transition: background 0.3s ease, color 0.3s ease;
+        }
+
+        .page-shell {
+            width: 100%;
+            max-width: 1200px;
+            background: var(--page-bg);
+            border-radius: 12px;
+            box-shadow:
+                0 18px 45px rgba(15, 23, 42, 0.16),
+                0 0 0 1px rgba(15, 23, 42, 0.03);
+            padding: 28px;
         }
 
         .container {
-            max-width: 900px;
+            width: 100%;
             margin: 0 auto;
         }
 
@@ -28,36 +76,73 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 32px;
-            padding-bottom: 16px;
-            border-bottom: 1px solid #334155;
+            margin-bottom: 24px;
+            gap: 12px;
         }
 
         h1 {
-            font-size: 2rem;
+            font-size: 2.1rem;
+            margin: 0;
+        }
+
+        .actions-inline {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .back-link,
+        .btn,
+        .btn-danger,
+        .logout-btn,
+        .theme-toggle {
+            text-decoration: none;
+            font-weight: 600;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
         }
 
         .back-link {
-            color: #3b82f6;
-            text-decoration: none;
-            font-weight: 500;
+            padding: 8px 12px;
+            border: 1px solid var(--panel-border);
+            background: var(--panel-bg);
+            color: var(--text-main);
         }
 
         .back-link:hover {
-            text-decoration: underline;
+            border-color: var(--accent);
+            color: var(--accent);
         }
 
-        .add-user-section {
-            background: #1e293b;
-            border: 1px solid #334155;
+        .theme-toggle {
+            padding: 8px 12px;
+            border: 1px solid var(--panel-border);
+            background: var(--panel-bg);
+            color: var(--text-main);
+            font-size: 1.1rem;
+        }
+
+        .theme-toggle:hover {
+            background: var(--accent-soft);
+            border-color: var(--accent);
+        }
+
+        .add-user-section,
+        .users-table {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
             border-radius: 12px;
-            padding: 24px;
-            margin-bottom: 32px;
+            padding: 20px;
+            margin-bottom: 24px;
         }
 
         h2 {
             font-size: 1.25rem;
-            margin-bottom: 16px;
+            margin-bottom: 12px;
         }
 
         .form-row {
@@ -74,52 +159,50 @@
         }
 
         label {
-            font-size: 0.875rem;
-            font-weight: 500;
-            color: #94a3b8;
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-muted);
         }
 
         input, select {
             padding: 10px 14px;
-            background: #0f172a;
-            border: 1px solid #334155;
-            border-radius: 6px;
-            color: #f1f5f9;
+            background: var(--page-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            color: var(--text-main);
             font-size: 1rem;
         }
 
         input:focus, select:focus {
             outline: none;
-            border-color: #3b82f6;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
         }
 
         .btn {
-            padding: 10px 20px;
-            background: #3b82f6;
+            padding: 10px 16px;
+            background: linear-gradient(135deg, var(--accent) 0%, #4f8dfd 100%);
             color: white;
             border: none;
-            border-radius: 6px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background 0.2s;
         }
 
         .btn:hover {
-            background: #2563eb;
+            filter: brightness(1.05);
         }
 
         .btn-danger {
-            background: #ef4444;
+            padding: 10px 16px;
+            background: var(--danger);
+            color: white;
+            border: none;
         }
 
         .btn-danger:hover {
-            background: #dc2626;
+            background: var(--danger-hover);
         }
 
         .users-table {
-            background: #1e293b;
-            border: 1px solid #334155;
-            border-radius: 12px;
+            padding: 0;
             overflow: hidden;
         }
 
@@ -129,21 +212,25 @@
         }
 
         thead {
-            background: #334155;
+            background: var(--accent-soft);
         }
 
         th {
             padding: 12px 16px;
             text-align: left;
-            font-weight: 600;
-            font-size: 0.875rem;
+            font-weight: 700;
+            font-size: 0.9rem;
             text-transform: uppercase;
-            color: #94a3b8;
+            color: var(--text-muted);
         }
 
         td {
             padding: 16px;
-            border-top: 1px solid #334155;
+            border-top: 1px solid var(--panel-border);
+        }
+
+        tr:nth-child(every) {
+            background: var(--panel-bg);
         }
 
         .role-badge {
@@ -151,24 +238,13 @@
             padding: 4px 12px;
             border-radius: 999px;
             font-size: 0.75rem;
-            font-weight: 600;
+            font-weight: 700;
             text-transform: uppercase;
         }
 
-        .role-admin {
-            background: #3b82f6;
-            color: white;
-        }
-
-        .role-user {
-            background: #10b981;
-            color: white;
-        }
-
-        .role-guest {
-            background: #6b7280;
-            color: white;
-        }
+        .role-admin { background: var(--accent); color: #fff; }
+        .role-user { background: #10b981; color: #fff; }
+        .role-guest { background: #6b7280; color: #fff; }
 
         .actions {
             display: flex;
@@ -177,110 +253,131 @@
 
         .btn-small {
             padding: 6px 12px;
-            font-size: 0.875rem;
+            font-size: 0.9rem;
         }
 
         select.role-select {
-            padding: 6px 12px;
-            font-size: 0.875rem;
+            padding: 8px 12px;
+            font-size: 0.9rem;
         }
 
-        @media (max-width: 768px) {
+        @media (max-width: 900px) {
             .form-row {
-                grid-template-columns: 1fr;
+                grid-template-columns: 1fr 1fr;
             }
+        }
 
-            table {
-                font-size: 0.875rem;
-            }
-
-            td, th {
-                padding: 12px;
-            }
+        @media (max-width: 640px) {
+            body { padding: 20px; }
+            .page-shell { padding: 20px; }
+            header { flex-direction: column; align-items: flex-start; }
+            .form-row { grid-template-columns: 1fr; }
+            .actions-inline { width: 100%; justify-content: space-between; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>👥 User Management</h1>
-            <a href="/" class="back-link">← Back to Home</a>
-        </header>
-
-        <div class="add-user-section">
-            <h2>Add New User</h2>
-            <form method="POST" action="/admin/users/add">
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="username">Username</label>
-                        <input type="text" id="username" name="username" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="password">Password</label>
-                        <input type="password" id="password" name="password" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="role">Role</label>
-                        <select id="role" name="role" required>
-                            <option value="user">User</option>
-                            <option value="admin">Admin</option>
-                            <option value="guest">Guest</option>
-                        </select>
-                    </div>
-                    <button type="submit" class="btn">Add User</button>
+    <div class="page-shell">
+        <div class="container">
+            <header>
+                <h1>👥 User Management</h1>
+                <div class="actions-inline">
+                    <button class="theme-toggle" id="themeToggle" title="Toggle dark mode">🌙</button>
+                    <a href="/" class="back-link">← Back to Home</a>
                 </div>
-            </form>
-        </div>
+            </header>
 
-        <div class="users-table">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Username</th>
-                        <th>Role</th>
-                        <th>Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {{range .Users}}
-                    <tr>
-                        <td>
-                            {{.Username}}
-                            {{if or (eq .Username "admin") (eq .Username "guest")}}
-                            <span style="color: #94a3b8; font-size: 0.75rem; margin-left: 8px;">🔒 Protected</span>
-                            {{end}}
-                        </td>
-                        <td>
-                            <span class="role-badge role-{{.Role}}">{{.Role}}</span>
-                        </td>
-                        <td>
-                            <div class="actions">
+            <div class="add-user-section">
+                <h2>Add New User</h2>
+                <form method="POST" action="/admin/users/add">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="username">Username</label>
+                            <input type="text" id="username" name="username" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="password">Password</label>
+                            <input type="password" id="password" name="password" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="role">Role</label>
+                            <select id="role" name="role" required>
+                                <option value="user">User</option>
+                                <option value="admin">Admin</option>
+                                <option value="guest">Guest</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn">Add User</button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="users-table">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Username</th>
+                            <th>Role</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Users}}
+                        <tr>
+                            <td>
+                                {{.Username}}
                                 {{if or (eq .Username "admin") (eq .Username "guest")}}
-                                <select class="role-select" disabled style="opacity: 0.5;">
-                                    <option>{{.Role}}</option>
-                                </select>
-                                <button class="btn btn-danger btn-small" disabled style="opacity: 0.5;">Delete</button>
-                                {{else}}
-                                <form method="POST" action="/admin/users/update" style="display: inline;">
-                                    <input type="hidden" name="username" value="{{.Username}}">
-                                    <select name="role" class="role-select" onchange="this.form.submit()">
-                                        <option value="admin" {{if eq .Role "admin"}}selected{{end}}>Admin</option>
-                                        <option value="user" {{if eq .Role "user"}}selected{{end}}>User</option>
-                                        <option value="guest" {{if eq .Role "guest"}}selected{{end}}>Guest</option>
-                                    </select>
-                                </form>
-                                <form method="POST" action="/admin/users/delete" style="display: inline;" onsubmit="return confirm('Delete user {{.Username}}?')">
-                                    <input type="hidden" name="username" value="{{.Username}}">
-                                    <button type="submit" class="btn btn-danger btn-small">Delete</button>
-                                </form>
+                                <span style="color: var(--text-muted); font-size: 0.75rem; margin-left: 8px;">🔒 Protected</span>
                                 {{end}}
-                            </div>
-                        </td>
-                    </tr>
-                    {{end}}
-                </tbody>
-            </table>
+                            </td>
+                            <td>
+                                <span class="role-badge role-{{.Role}}">{{.Role}}</span>
+                            </td>
+                            <td>
+                                <div class="actions">
+                                    {{if or (eq .Username "admin") (eq .Username "guest")}}
+                                    <select class="role-select" disabled style="opacity: 0.5;">
+                                        <option>{{.Role}}</option>
+                                    </select>
+                                    <button class="btn btn-danger btn-small" disabled style="opacity: 0.5;">Delete</button>
+                                    {{else}}
+                                    <form method="POST" action="/admin/users/update" style="display: inline;">
+                                        <input type="hidden" name="username" value="{{.Username}}">
+                                        <select name="role" class="role-select" onchange="this.form.submit()">
+                                            <option value="admin" {{if eq .Role "admin"}}selected{{end}}>Admin</option>
+                                            <option value="user" {{if eq .Role "user"}}selected{{end}}>User</option>
+                                            <option value="guest" {{if eq .Role "guest"}}selected{{end}}>Guest</option>
+                                        </select>
+                                    </form>
+                                    <form method="POST" action="/admin/users/delete" style="display: inline;" onsubmit="return confirm('Delete user {{.Username}}?')">
+                                        <input type="hidden" name="username" value="{{.Username}}">
+                                        <button type="submit" class="btn btn-danger btn-small">Delete</button>
+                                    </form>
+                                    {{end}}
+                                </div>
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
         </div>
     </div>
+
+    <script>
+    const themeToggle = document.getElementById('themeToggle');
+    const currentTheme = localStorage.getItem('theme') || 'light';
+    if (currentTheme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        themeToggle.textContent = '☀️';
+    }
+
+    themeToggle?.addEventListener('click', () => {
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        document.documentElement.setAttribute('data-theme', isDark ? 'light' : 'dark');
+        localStorage.setItem('theme', isDark ? 'light' : 'dark');
+        themeToggle.textContent = isDark ? '🌙' : '☀️';
+    });
+    </script>
 </body>
 </html>

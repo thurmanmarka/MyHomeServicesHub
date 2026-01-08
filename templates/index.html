@@ -7,22 +7,32 @@
     <style>
         :root {
             --bg: #e7edf4;
+            --page-bg: #f5f7fb;
             --panel-bg: #ffffff;
             --panel-border: #d2d7e0;
             --accent: #2563eb;
             --accent-soft: #e0edff;
             --text-main: #1f2933;
             --text-muted: #6b7280;
+            --gradient-start: #d9e6ff;
+            --gradient-mid1: #e7edf4;
+            --gradient-mid2: #dde7f4;
+            --gradient-end: #d3e0f0;
         }
 
         [data-theme="dark"] {
             --bg: #0f172a;
+            --page-bg: #1e293b;
             --panel-bg: #334155;
             --panel-border: #475569;
             --accent: #3b82f6;
             --accent-soft: #1e3a8a;
             --text-main: #f1f5f9;
             --text-muted: #94a3b8;
+            --gradient-start: #1e293b;
+            --gradient-mid1: #0f172a;
+            --gradient-mid2: #1e293b;
+            --gradient-end: #334155;
         }
 
         * {
@@ -33,7 +43,7 @@
 
         body {
             font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: var(--bg);
+            background: radial-gradient(circle at top left, var(--gradient-start), var(--gradient-mid1) 40%, var(--gradient-mid2) 70%, var(--gradient-end) 100%);
             color: var(--text-main);
             min-height: 100vh;
             display: flex;
@@ -43,10 +53,23 @@
             transition: background 0.3s ease, color 0.3s ease;
         }
 
+        .page-shell {
+            max-width: 1600px;
+            width: 100%;
+            background: var(--page-bg);
+            border-radius: 12px;
+            box-shadow:
+                0 18px 45px rgba(15, 23, 42, 0.16),
+                0 0 0 1px rgba(15, 23, 42, 0.03);
+            padding: 32px;
+            transition: background 0.3s ease;
+        }
+
         .container {
-            max-width: 800px;
+            max-width: none;
             width: 100%;
             text-align: center;
+            margin: 0 auto;
         }
 
         h1 {
@@ -123,6 +146,110 @@
             margin-top: 8px;
         }
 
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.4);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            z-index: 1000;
+        }
+
+        .modal-card {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            border-radius: 12px;
+            width: 100%;
+            max-width: 520px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+            padding: 24px;
+            color: var(--text-main);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+
+        .modal-title {
+            font-size: 1.2rem;
+            font-weight: 700;
+        }
+
+        .close-btn {
+            background: none;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 1rem;
+            color: var(--text-main);
+        }
+
+        .close-btn:hover {
+            background: var(--accent-soft);
+            border-color: var(--accent);
+        }
+
+        .form-group-modal {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            margin-bottom: 14px;
+        }
+
+        .form-group-modal label {
+            font-weight: 600;
+            color: var(--text-muted);
+        }
+
+        .form-group-modal input {
+            padding: 10px 12px;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            background: var(--page-bg);
+            color: var(--text-main);
+        }
+
+        .form-group-modal input:focus {
+            outline: none;
+            border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+        }
+
+        .alert {
+            padding: 10px 12px;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            border: 1px solid transparent;
+            display: none;
+        }
+
+        .alert.error {
+            background: #fee2e2;
+            border-color: #fecaca;
+            color: #b91c1c;
+        }
+
+        .alert.success {
+            background: #ecfdf3;
+            border-color: #bbf7d0;
+            color: #166534;
+        }
+
+        .modal-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            margin-top: 8px;
+        }
+
+        .hidden { display: none; }
+
         .footer {
             margin-top: 48px;
             text-align: center;
@@ -131,12 +258,27 @@
         }
 
         .user-info {
-            position: absolute;
-            top: 24px;
-            right: 24px;
             display: flex;
             align-items: center;
+            justify-content: flex-end;
             gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .theme-toggle {
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            color: var(--text-main);
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1.2rem;
+            transition: all 0.2s;
+        }
+
+        .theme-toggle:hover {
+            background: var(--accent-soft);
+            border-color: var(--accent);
         }
 
         .user-badge {
@@ -182,62 +324,176 @@
         }
 
         @media (max-width: 600px) {
-            .container {
-                padding: 32px 24px;
+            .page-shell {
+                padding: 24px;
             }
             h1 {
                 font-size: 2rem;
             }
             .user-info {
-                position: static;
                 justify-content: center;
-                margin-bottom: 24px;
                 flex-wrap: wrap;
             }
         }
     </style>
 </head>
 <body>
-    {{if .Username}}
-    <div class="user-info">
-        <div class="user-badge">
-            <span>👤 {{.Username}}</span>
-            <span class="role-tag {{if eq .Role "guest"}}guest{{end}}">{{.Role}}</span>
-        </div>
-        {{if eq .Role "admin"}}
-        <a href="/change-password" class="logout-btn">Change Password</a>
-        <a href="/admin/users" class="logout-btn">👥 Users</a>
-        {{else if eq .Role "user"}}
-        <a href="/change-password" class="logout-btn">Change Password</a>
-        {{end}}
-        <a href="/logout" class="logout-btn">Logout</a>
-    </div>
-    {{end}}
-    
-    <div class="container">
-        <h1>🏠 My Home Services Hub</h1>
-        <p class="subtitle">Your centralized monitoring and management platform</p>
-
-        <div class="modules" id="modulesContainer">
-            {{range .Services}}
-                {{if .Enabled}}
-                    <a href="{{.Path}}" class="module-card" data-service="{{.Path}}">
-                        <div class="module-icon">{{.Icon}}</div>
-                        <div class="module-title">{{.Name}}</div>
-                        <div class="module-description">{{.Description}}</div>
-                    </a>
-                {{else}}
-                    <div class="module-card disabled" data-service="{{.Path}}">
-                        <div class="module-icon">{{.Icon}}</div>
-                        <div class="module-title">{{.Name}}</div>
-                        <div class="module-description">{{.Description}}</div>
-                        <span class="coming-soon">Coming Soon</span>
-                    </div>
-                {{end}}
+    <div class="page-shell">
+        {{if .Username}}
+        <div class="user-info">
+            <div class="user-badge">
+                <span>👤 {{.Username}}</span>
+                <span class="role-tag {{if eq .Role "guest"}}guest{{end}}">{{.Role}}</span>
+            </div>
+            {{if eq .Role "admin"}}
+            <button class="logout-btn change-password-link" type="button">Change Password</button>
+            <a href="/admin/users" class="logout-btn">👥 Users</a>
+            {{else if eq .Role "user"}}
+            <button class="logout-btn change-password-link" type="button">Change Password</button>
             {{end}}
+            <button class="theme-toggle" id="themeToggle" title="Toggle dark mode">🌙</button>
+            <a href="/logout" class="logout-btn">Logout</a>
+        </div>
+        {{end}}
+        
+        <div class="container">
+            <h1>🏠 My Home Services Hub</h1>
+            <p class="subtitle">Your centralized monitoring and management platform</p>
+
+            <div class="modules" id="modulesContainer">
+                {{range .Services}}
+                    {{if .Enabled}}
+                        <a href="{{.Path}}" class="module-card" data-service="{{.Path}}">
+                            <div class="module-icon">{{.Icon}}</div>
+                            <div class="module-title">{{.Name}}</div>
+                            <div class="module-description">{{.Description}}</div>
+                        </a>
+                    {{else}}
+                        <div class="module-card disabled" data-service="{{.Path}}">
+                            <div class="module-icon">{{.Icon}}</div>
+                            <div class="module-title">{{.Name}}</div>
+                            <div class="module-description">{{.Description}}</div>
+                            <span class="coming-soon">Coming Soon</span>
+                        </div>
+                    {{end}}
+                {{end}}
+            </div>
+
+            <!-- Scripts are at the bottom to avoid duplicate declarations -->
+
+            <div class="footer">
+                My Home Services Hub v1.0.0 | Powered by Go & nginx
+            </div>
+            </div>
+        </div>
+
+        <div id="passwordModal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="passwordModalTitle">
+            <div class="modal-card">
+                <div class="modal-header">
+                    <div class="modal-title" id="passwordModalTitle">🔐 Change Password</div>
+                    <button class="close-btn" id="passwordModalClose" aria-label="Close">✕</button>
+                </div>
+                <div class="alert error" id="passwordError"></div>
+                <div class="alert success" id="passwordSuccess"></div>
+                <form id="passwordForm">
+                    <div class="form-group-modal">
+                        <label for="current_password">Current Password</label>
+                        <input type="password" id="current_password" name="current_password" autocomplete="current-password" required>
+                    </div>
+                    <div class="form-group-modal">
+                        <label for="new_password">New Password</label>
+                        <input type="password" id="new_password" name="new_password" autocomplete="new-password" required>
+                    </div>
+                    <div class="form-group-modal">
+                        <label for="confirm_password">Confirm New Password</label>
+                        <input type="password" id="confirm_password" name="confirm_password" autocomplete="new-password" required>
+                    </div>
+                    <div class="modal-actions">
+                        <button type="button" class="logout-btn" id="passwordCancel">Cancel</button>
+                        <button type="submit" class="logout-btn" id="passwordSubmit">Save</button>
+                    </div>
+                </form>
+            </div>
         </div>
 
         <script>
+        // Theme toggle
+        const themeToggle = document.getElementById('themeToggle');
+        const currentTheme = localStorage.getItem('theme') || 'light';
+        if (currentTheme === 'dark') {
+            document.documentElement.setAttribute('data-theme', 'dark');
+            themeToggle.textContent = '☀️';
+        }
+    
+        themeToggle?.addEventListener('click', () => {
+            const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+            document.documentElement.setAttribute('data-theme', isDark ? 'light' : 'dark');
+            localStorage.setItem('theme', isDark ? 'light' : 'dark');
+            themeToggle.textContent = isDark ? '🌙' : '☀️';
+        });
+
+        // Password modal logic
+        const modal = document.getElementById('passwordModal');
+        const openers = Array.from(document.querySelectorAll('.change-password-link'));
+        const closeBtn = document.getElementById('passwordModalClose');
+        const cancelBtn = document.getElementById('passwordCancel');
+        const form = document.getElementById('passwordForm');
+        const errorBox = document.getElementById('passwordError');
+        const successBox = document.getElementById('passwordSuccess');
+        const submitBtn = document.getElementById('passwordSubmit');
+
+        function showModal() {
+            modal.classList.remove('hidden');
+            errorBox.style.display = 'none';
+            successBox.style.display = 'none';
+            form.reset();
+            document.body.style.overflow = 'hidden';
+        }
+
+        function hideModal() {
+            modal.classList.add('hidden');
+            document.body.style.overflow = '';
+        }
+
+        openers.forEach(btn => btn.addEventListener('click', showModal));
+        closeBtn?.addEventListener('click', hideModal);
+        cancelBtn?.addEventListener('click', hideModal);
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) hideModal();
+        });
+
+        form?.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorBox.style.display = 'none';
+            successBox.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Saving...';
+            try {
+                const formData = new FormData(form);
+                const res = await fetch('/change-password', {
+                    method: 'POST',
+                    body: formData,
+                    headers: { 'Accept': 'application/json' },
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok || data.status !== 'ok') {
+                    errorBox.textContent = data.error || 'Failed to change password';
+                    errorBox.style.display = 'block';
+                } else {
+                    successBox.textContent = 'Password changed successfully';
+                    successBox.style.display = 'block';
+                    setTimeout(hideModal, 1200);
+                }
+            } catch (err) {
+                errorBox.textContent = 'Network error. Please try again.';
+                errorBox.style.display = 'block';
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = 'Save';
+            }
+        });
+
+        // Service health check
         function checkServiceHealth() {
             const services = Array.from(document.querySelectorAll('[data-service]'));
             services.forEach(card => {
@@ -259,9 +515,5 @@
         setInterval(checkServiceHealth, 10000);
         </script>
 
-        <div class="footer">
-            My Home Services Hub v1.0.0 | Powered by Go & nginx
-        </div>
-    </div>
-</body>
-</html>
+    </body>
+    </html>

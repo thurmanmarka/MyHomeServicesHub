@@ -6,41 +6,66 @@
     <title>Login - My Home Services Hub</title>
     <style>
         :root {
-            --bg: #0f172a;
-            --panel-bg: #1e293b;
-            --panel-border: #334155;
-            --accent: #3b82f6;
-            --accent-hover: #2563eb;
-            --text-main: #f1f5f9;
-            --text-muted: #94a3b8;
-            --error: #ef4444;
+            --bg: #e7edf4;
+            --page-bg: #f5f7fb;
+            --panel-bg: #ffffff;
+            --panel-border: #d2d7e0;
+            --accent: #2563eb;
+            --accent-soft: #e0edff;
+            --text-main: #1f2933;
+            --text-muted: #6b7280;
+            --gradient-start: #d9e6ff;
+            --gradient-mid1: #e7edf4;
+            --gradient-mid2: #dde7f4;
+            --gradient-end: #d3e0f0;
+            --error-bg: #fee2e2;
+            --error-border: #fecaca;
+            --error-text: #b91c1c;
         }
 
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
+        [data-theme="dark"] {
+            --bg: #0f172a;
+            --page-bg: #1e293b;
+            --panel-bg: #334155;
+            --panel-border: #475569;
+            --accent: #3b82f6;
+            --accent-soft: #1e3a8a;
+            --text-main: #f1f5f9;
+            --text-muted: #94a3b8;
+            --gradient-start: #1e293b;
+            --gradient-mid1: #0f172a;
+            --gradient-mid2: #1e293b;
+            --gradient-end: #334155;
+            --error-bg: #2a0f12;
+            --error-border: #7f1d1d;
+            --error-text: #fecaca;
         }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
 
         body {
             font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            background: var(--bg);
+            background: radial-gradient(circle at top left, var(--gradient-start), var(--gradient-mid1) 40%, var(--gradient-mid2) 70%, var(--gradient-end) 100%);
             color: var(--text-main);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 24px;
+            padding: 32px;
+            transition: background 0.3s ease, color 0.3s ease;
         }
 
         .login-container {
-            background: var(--panel-bg);
+            background: var(--page-bg);
             border: 1px solid var(--panel-border);
             border-radius: 16px;
-            padding: 48px 40px;
-            max-width: 400px;
+            padding: 32px;
+            max-width: 440px;
             width: 100%;
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3);
+            box-shadow:
+                0 18px 45px rgba(15, 23, 42, 0.16),
+                0 0 0 1px rgba(15, 23, 42, 0.03);
+            position: relative;
         }
 
         .login-header {
@@ -78,35 +103,39 @@
         input[type="password"] {
             width: 100%;
             padding: 12px 16px;
-            background: var(--bg);
+            background: var(--panel-bg);
             border: 1px solid var(--panel-border);
-            border-radius: 8px;
+            border-radius: 10px;
             color: var(--text-main);
             font-size: 1rem;
-            transition: border-color 0.2s;
+            transition: border-color 0.2s, box-shadow 0.2s;
         }
 
         input:focus {
             outline: none;
             border-color: var(--accent);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
         }
 
         .btn {
             width: 100%;
             padding: 12px;
-            background: var(--accent);
+            background: linear-gradient(135deg, var(--accent) 0%, #4f8dfd 100%);
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: 10px;
             font-size: 1rem;
-            font-weight: 600;
+            font-weight: 700;
             cursor: pointer;
-            transition: background 0.2s;
+            transition: transform 0.15s ease, box-shadow 0.2s ease;
         }
 
         .btn:hover {
-            background: var(--accent-hover);
+            transform: translateY(-1px);
+            box-shadow: 0 10px 20px rgba(37, 99, 235, 0.25);
         }
+
+        .btn:active { transform: translateY(0); }
 
         .btn-guest {
             width: 100%;
@@ -114,7 +143,7 @@
             background: transparent;
             color: var(--text-main);
             border: 1px solid var(--panel-border);
-            border-radius: 8px;
+            border-radius: 10px;
             font-size: 1rem;
             font-weight: 600;
             cursor: pointer;
@@ -125,6 +154,7 @@
         .btn-guest:hover {
             border-color: var(--accent);
             color: var(--accent);
+            background: var(--accent-soft);
         }
 
         .divider {
@@ -144,7 +174,7 @@
         }
 
         .divider span {
-            background: var(--panel-bg);
+            background: var(--page-bg);
             padding: 0 16px;
             position: relative;
             color: var(--text-muted);
@@ -152,13 +182,32 @@
         }
 
         .error {
-            background: rgba(239, 68, 68, 0.1);
-            border: 1px solid var(--error);
-            color: var(--error);
+            background: var(--error-bg);
+            border: 1px solid var(--error-border);
+            color: var(--error-text);
             padding: 12px;
-            border-radius: 8px;
+            border-radius: 10px;
             margin-bottom: 20px;
             font-size: 0.9rem;
+        }
+
+        .theme-toggle {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: var(--panel-bg);
+            border: 1px solid var(--panel-border);
+            color: var(--text-main);
+            padding: 6px 10px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 1.1rem;
+            transition: all 0.2s;
+        }
+
+        .theme-toggle:hover {
+            background: var(--accent-soft);
+            border-color: var(--accent);
         }
 
         @media (max-width: 480px) {
@@ -170,6 +219,8 @@
 </head>
 <body>
     <div class="login-container">
+        <button class="theme-toggle" id="themeToggle" title="Toggle dark mode">🌙</button>
+        
         <div class="login-header">
             <div class="login-icon">🔒</div>
             <h1>Welcome Back</h1>
@@ -206,5 +257,21 @@
             <button type="submit" class="btn-guest">👤 Continue as Guest</button>
         </form>
     </div>
+
+    <script>
+    const themeToggle = document.getElementById('themeToggle');
+    const currentTheme = localStorage.getItem('theme') || 'light';
+    if (currentTheme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'dark');
+        themeToggle.textContent = '☀️';
+    }
+
+    themeToggle?.addEventListener('click', () => {
+        const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+        document.documentElement.setAttribute('data-theme', isDark ? 'light' : 'dark');
+        localStorage.setItem('theme', isDark ? 'light' : 'dark');
+        themeToggle.textContent = isDark ? '🌙' : '☀️';
+    });
+    </script>
 </body>
 </html>
