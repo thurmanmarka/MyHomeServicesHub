@@ -392,6 +392,17 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if session.Role == "guest" {
+		if expectJSON {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "Guest account cannot change password"})
+			return
+		}
+		http.Error(w, "Guest account cannot change password", http.StatusForbidden)
+		return
+	}
+
 	if r.Method == "GET" {
 		w.Header().Set("Content-Type", "text/html")
 		data := map[string]string{

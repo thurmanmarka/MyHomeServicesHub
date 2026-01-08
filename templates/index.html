@@ -396,6 +396,7 @@
                 <div class="alert error" id="passwordError"></div>
                 <div class="alert success" id="passwordSuccess"></div>
                 <form id="passwordForm">
+                    <input type="text" name="username" value="{{.Username}}" autocomplete="username" aria-hidden="true" tabindex="-1" style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">
                     <div class="form-group-modal">
                         <label for="current_password">Current Password</label>
                         <input type="password" id="current_password" name="current_password" autocomplete="current-password" required>
