@@ -634,11 +634,14 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 
 		// Build the target URL
 		var targetPath string
-		if strings.HasPrefix(r.URL.Path, "/snmp/") {
+		switch {
+		case strings.HasPrefix(r.URL.Path, "/snmp/") || r.URL.Path == "/snmp":
 			targetPath = strings.TrimPrefix(r.URL.Path, "/snmp")
-		} else if strings.HasPrefix(r.URL.Path, "/weather/") {
+		case strings.HasPrefix(r.URL.Path, "/weather/") || r.URL.Path == "/weather":
 			targetPath = strings.TrimPrefix(r.URL.Path, "/weather")
-		} else {
+		case strings.HasPrefix(r.URL.Path, "/woo/") || r.URL.Path == "/woo":
+			targetPath = strings.TrimPrefix(r.URL.Path, "/woo")
+		default:
 			targetPath = r.URL.Path
 		}
 		if targetPath == "" {
