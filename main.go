@@ -90,6 +90,10 @@ func main() {
 	http.HandleFunc("/snmp", proxyWithAuth("http://localhost:8082/"))
 	http.HandleFunc("/snmp/", proxyWithAuth("http://localhost:8082/"))
 
+	// MyWifiControl routes
+	http.HandleFunc("/wifi", proxyWithAuth("http://localhost:8084/"))
+	http.HandleFunc("/wifi/", proxyWithAuth("http://localhost:8084/"))
+
 	// Start cleanup of expired sessions
 	go cleanupSessions()
 
@@ -553,6 +557,40 @@ func cleanupSessions() {
 	}
 }
 
+// serviceBasePath maps a proxied request path to the service path it belongs to.
+// The weather app is also served from /api/ and /static/.
+func serviceBasePath(path string) string {
+	if strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/static/") {
+		return "/weather"
+	}
+	if i := strings.Index(path[1:], "/"); i >= 0 {
+		return path[:i+1]
+	}
+	return path
+}
+
+// canAccessService reports whether role may use the service that owns path,
+// based on the service's allowed_roles in config.yaml. An empty list allows
+// everyone. Paths with no matching service entry are admin-only.
+func canAccessService(path, role string) bool {
+	base := serviceBasePath(path)
+	for _, service := range config.Services {
+		if service.Path != base {
+			continue
+		}
+		if len(service.AllowedRoles) == 0 {
+			return true
+		}
+		for _, allowed := range service.AllowedRoles {
+			if allowed == role {
+				return true
+			}
+		}
+		return false
+	}
+	return role == "admin"
+}
+
 // Proxy requests to backend services with auth headers
 func proxyWithAuth(targetURL string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -560,9 +598,12 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 		username := ""
 		role := "guest" // Default to guest if not authenticated
 
-		// Allow SSE connections through without authentication check
-		// The page that creates the EventSource is already protected
-		if r.URL.Path == "/api/stream" || r.Header.Get("Accept") == "text/event-stream" {
+		// Allow the weather app's SSE stream through without authentication check.
+		// The page that creates the EventSource is already protected. This is
+		// limited to weather paths so the header can't be used to skip auth on
+		// other services.
+		isSSE := r.URL.Path == "/api/stream" || r.Header.Get("Accept") == "text/event-stream"
+		if isSSE && serviceBasePath(r.URL.Path) == "/weather" {
 			// Pass through to backend without auth headers
 			targetPath := strings.TrimPrefix(r.URL.Path, "/weather")
 			if targetPath == "" {
@@ -579,12 +620,15 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 				return
 			}
 
-			// Copy headers
+			// Copy headers, but never let a client supply its own identity
 			for key, values := range r.Header {
 				for _, value := range values {
 					proxyReq.Header.Add(key, value)
 				}
 			}
+			proxyReq.Header.Del("X-Hub-User")
+			proxyReq.Header.Del("X-Hub-Role")
+			proxyReq.Header.Del("X-Hub-Authenticated")
 
 			// Execute the proxy request
 			client := &http.Client{
@@ -630,6 +674,13 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 
 			username = session.Username
 			role = session.Role
+
+			// Enforce the service's allowed_roles, not just hide its tile
+			if !canAccessService(r.URL.Path, role) {
+				log.Printf("Denied %s (role %s) access to %s", username, role, r.URL.Path)
+				http.Error(w, "Forbidden: your account does not have access to this service", http.StatusForbidden)
+				return
+			}
 		}
 
 		// Build the target URL
@@ -641,6 +692,8 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 			targetPath = strings.TrimPrefix(r.URL.Path, "/weather")
 		case strings.HasPrefix(r.URL.Path, "/woo/") || r.URL.Path == "/woo":
 			targetPath = strings.TrimPrefix(r.URL.Path, "/woo")
+		case strings.HasPrefix(r.URL.Path, "/wifi/") || r.URL.Path == "/wifi":
+			targetPath = strings.TrimPrefix(r.URL.Path, "/wifi")
 		default:
 			targetPath = r.URL.Path
 		}
