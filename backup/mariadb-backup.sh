@@ -17,6 +17,8 @@ set -euo pipefail
 # More than this means the local folder was emptied, so stop rather than
 # mirror that deletion to the NAS.
 : "${MAX_NAS_DELETES:=20}"
+# Extra files to include, separated by spaces (paths without spaces)
+: "${EXTRA_FILES:=}"
 
 fail() { echo "BACKUP FAILED: $*" >&2; exit 1; }
 
@@ -49,6 +51,18 @@ done
 # Database users and their grants, so a rebuilt server can be restored fully
 mariadb-dump --system=users | gzip > "$tmp/users-and-grants.sql.gz" \
     || fail "dump of users and grants failed"
+
+# Files that aren't in a database (e.g. Wi-Fi Control's saved secrets), kept
+# under their full path in files/. A missing file is reported, not fatal:
+# some only appear once the app has saved something.
+for f in $EXTRA_FILES; do
+    if [ -f "$f" ]; then
+        mkdir -p "$tmp/files"
+        cp --parents --preserve=mode,timestamps "$f" "$tmp/files/" || fail "copy of $f failed"
+    else
+        echo "Skipped $f (not found)"
+    fi
+done
 
 # Swap the finished dump into place only once every file is good
 rm -rf "$dest"

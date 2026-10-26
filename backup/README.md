@@ -1,7 +1,8 @@
 # MariaDB backups
 
 Nightly backup of every application database on the Pi (`hub_db`, `snmp_db`,
-and any added later) plus MariaDB's users and grants.
+`wifi_db`, and any added later) plus MariaDB's users and grants, and the files
+listed in `EXTRA_FILES` (Wi-Fi Control's `secrets.json` and `secret.key`).
 
 - Runs at about 03:30 from a systemd timer; if the Pi was off, it runs at the next boot.
 - Writes `/mnt/hdd/backups/mariadb/YYYY-MM-DD/<db>.sql.gz` and keeps the newest 14 days.
@@ -10,8 +11,9 @@ and any added later) plus MariaDB's users and grants.
 - A dump that fails or is cut short fails the whole run (visible in `systemctl status`),
   and the previous good backup is left alone.
 
-The dumps contain password hashes and SNMP community strings: they are written
-readable by root only, and the NAS folder should be private too.
+The backups contain password hashes, SNMP community strings, and Wi-Fi
+Control's saved secrets together with the key that decrypts them: they are
+written readable by root only, and the NAS folder must stay private too.
 
 ## Files
 
@@ -83,6 +85,19 @@ Stop the app that uses it first:
 sudo systemctl stop snmp-app
 zcat /mnt/hdd/backups/mariadb/2026-10-25/snmp_db.sql.gz | sudo mariadb
 sudo systemctl start snmp-app
+```
+
+Extra files are kept under their full path in `files/`. To put Wi-Fi
+Control's saved secrets back (both files, always together):
+
+```bash
+B=/mnt/hdd/backups/mariadb/2026-10-25/files
+sudo systemctl stop wifi-control
+sudo install -m 600 -o myhomeservices -g myhomeservices \
+  $B/home/myhomeservices/wifi-control/secrets.json \
+  $B/home/myhomeservices/wifi-control/secret.key \
+  /home/myhomeservices/wifi-control/
+sudo systemctl start wifi-control
 ```
 
 After a full rebuild of the server, restore the users and grants first:
