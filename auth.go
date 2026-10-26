@@ -4,7 +4,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"log"
 	"net"
 	"net/http"
 	"sync"
@@ -57,6 +56,8 @@ type AuthStore interface {
 	// if the token is unknown or expired.
 	GetSession(token string) (*Session, bool)
 	DeleteSession(token string)
+	// DeleteUserSessions signs the user out everywhere except keepToken.
+	DeleteUserSessions(username, keepToken string) error
 	Cleanup()
 
 	RecordLogin(username string, success bool, ip, userAgent string)
@@ -82,19 +83,45 @@ func currentSession(r *http.Request) *Session {
 	return s
 }
 
-// clientIP is the browser's address. nginx passes it in X-Real-IP; the header
-// is only trusted when the request came from nginx on this machine.
-func clientIP(r *http.Request) string {
+// sessionLifetime is how long a login lasts at most.
+func sessionLifetime() time.Duration {
+	return time.Duration(config.Auth.SessionHours) * time.Hour
+}
+
+// idleTimeout signs a session out after this long without a request.
+func idleTimeout() time.Duration {
+	return time.Duration(config.Auth.IdleMinutes) * time.Minute
+}
+
+// fromProxy reports whether r came from nginx on this machine, whose
+// X-Real-IP and X-Forwarded-Proto headers can then be trusted.
+func fromProxy(r *http.Request) bool {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
-	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// clientIP is the browser's address. nginx passes it in X-Real-IP.
+func clientIP(r *http.Request) string {
+	if fromProxy(r) {
 		if real := r.Header.Get("X-Real-IP"); real != "" {
 			return real
 		}
 	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
 	return host
+}
+
+// isHTTPS reports whether the browser connected over HTTPS, so cookies can be
+// marked Secure.
+func isHTTPS(r *http.Request) bool {
+	return r.TLS != nil || (fromProxy(r) && r.Header.Get("X-Forwarded-Proto") == "https")
 }
 
 // hashToken is what the database stores instead of the session token, so a
@@ -193,17 +220,20 @@ func (c *configStore) update(username string, change func(*ConfigUser)) error {
 func (c *configStore) CreateSession(token string, s Session, ip, userAgent string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	s.LastSeen = time.Now()
 	c.sessions[token] = &s
 	return nil
 }
 
 func (c *configStore) GetSession(token string) (*Session, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
 	s, ok := c.sessions[token]
-	if !ok || s.ExpiresAt.Before(time.Now()) {
+	if !ok || s.ExpiresAt.Before(now) || now.Sub(s.LastSeen) > idleTimeout() {
 		return nil, false
 	}
+	s.LastSeen = now
 	// Look up the current role so a role change applies straight away
 	for _, u := range config.Auth.Users {
 		if u.Username == s.Username {
@@ -221,21 +251,30 @@ func (c *configStore) DeleteSession(token string) {
 	delete(c.sessions, token)
 }
 
-func (c *configStore) Cleanup() {
+func (c *configStore) DeleteUserSessions(username, keepToken string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	for token, s := range c.sessions {
-		if s.ExpiresAt.Before(time.Now()) {
+		if s.Username == username && token != keepToken {
+			delete(c.sessions, token)
+		}
+	}
+	return nil
+}
+
+func (c *configStore) Cleanup() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now()
+	for token, s := range c.sessions {
+		if s.ExpiresAt.Before(now) || now.Sub(s.LastSeen) > idleTimeout() {
 			delete(c.sessions, token)
 		}
 	}
 }
 
-func (c *configStore) RecordLogin(username string, success bool, ip, userAgent string) {
-	if !success {
-		log.Printf("Failed login for %q from %s", username, ip)
-	}
-}
+// Failed logins are logged by handleLogin; there is nowhere to keep history.
+func (c *configStore) RecordLogin(username string, success bool, ip, userAgent string) {}
 
 func (c *configStore) Audit(actor, action, target, detail string) {}
 

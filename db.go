@@ -32,6 +32,7 @@ var schema = []string{
 		user_id    INT UNSIGNED NOT NULL,
 		created_at DATETIME NOT NULL,
 		expires_at DATETIME NOT NULL,
+		last_seen_at DATETIME NULL,
 		ip         VARCHAR(45)  NOT NULL DEFAULT '',
 		user_agent VARCHAR(255) NOT NULL DEFAULT '',
 		KEY idx_expires (expires_at),
@@ -56,6 +57,8 @@ var schema = []string{
 		created_at DATETIME NOT NULL,
 		KEY idx_created (created_at)
 	) ENGINE=InnoDB`,
+	// Added for the idle timeout; older sessions count from created_at
+	`ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_seen_at DATETIME NULL AFTER expires_at`,
 }
 
 // openSQLStore connects to MariaDB and creates any missing tables.
@@ -198,9 +201,9 @@ func (s *sqlStore) CreateSession(token string, sess Session, ip, userAgent strin
 		userAgent = userAgent[:255]
 	}
 	now := time.Now().UTC()
-	_, err := s.db.Exec(`INSERT INTO sessions (token_hash, user_id, created_at, expires_at, ip, user_agent)
-		SELECT ?, id, ?, ?, ?, ? FROM users WHERE username = ?`,
-		hashToken(token), now, sess.ExpiresAt.UTC(), ip, userAgent, sess.Username)
+	_, err := s.db.Exec(`INSERT INTO sessions (token_hash, user_id, created_at, expires_at, last_seen_at, ip, user_agent)
+		SELECT ?, id, ?, ?, ?, ?, ? FROM users WHERE username = ?`,
+		hashToken(token), now, sess.ExpiresAt.UTC(), now, ip, userAgent, sess.Username)
 	if err != nil {
 		return err
 	}
@@ -210,15 +213,23 @@ func (s *sqlStore) CreateSession(token string, sess Session, ip, userAgent strin
 
 func (s *sqlStore) GetSession(token string) (*Session, bool) {
 	var sess Session
-	err := s.db.QueryRow(`SELECT u.username, u.role, s.expires_at
+	now := time.Now().UTC()
+	tokenHash := hashToken(token)
+	err := s.db.QueryRow(`SELECT u.username, u.role, s.expires_at, COALESCE(s.last_seen_at, s.created_at)
 		FROM sessions s JOIN users u ON u.id = s.user_id
-		WHERE s.token_hash = ? AND s.expires_at > ?`,
-		hashToken(token), time.Now().UTC()).Scan(&sess.Username, &sess.Role, &sess.ExpiresAt)
+		WHERE s.token_hash = ? AND s.expires_at > ? AND COALESCE(s.last_seen_at, s.created_at) > ?`,
+		tokenHash, now, now.Add(-idleTimeout())).Scan(&sess.Username, &sess.Role, &sess.ExpiresAt, &sess.LastSeen)
 	if err != nil {
 		if !errors.Is(err, sql.ErrNoRows) {
 			log.Printf("Session lookup failed: %v", err)
 		}
 		return nil, false
+	}
+	// To the minute is plenty for the idle timeout; no need to write on every request
+	if now.Sub(sess.LastSeen) > time.Minute {
+		if _, err := s.db.Exec(`UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?`, now, tokenHash); err != nil {
+			log.Printf("Failed to update session: %v", err)
+		}
 	}
 	return &sess, true
 }
@@ -229,10 +240,17 @@ func (s *sqlStore) DeleteSession(token string) {
 	}
 }
 
-// Cleanup removes expired sessions and login attempts older than a year.
+func (s *sqlStore) DeleteUserSessions(username, keepToken string) error {
+	_, err := s.db.Exec(`DELETE s FROM sessions s JOIN users u ON u.id = s.user_id
+		WHERE u.username = ? AND s.token_hash <> ?`, username, hashToken(keepToken))
+	return err
+}
+
+// Cleanup removes expired and idle sessions, and login attempts older than a year.
 func (s *sqlStore) Cleanup() {
 	now := time.Now().UTC()
-	if _, err := s.db.Exec(`DELETE FROM sessions WHERE expires_at < ?`, now); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM sessions WHERE expires_at < ? OR COALESCE(last_seen_at, created_at) < ?`,
+		now, now.Add(-idleTimeout())); err != nil {
 		log.Printf("Session cleanup failed: %v", err)
 	}
 	if _, err := s.db.Exec(`DELETE FROM login_events WHERE created_at < ?`, now.AddDate(-1, 0, 0)); err != nil {

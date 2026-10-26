@@ -9,8 +9,10 @@ import (
 	"html/template"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,11 +28,24 @@ type ConfigUser struct {
 
 type Config struct {
 	Server struct {
-		Port int `yaml:"port"`
+		// Address to listen on. The default, 127.0.0.1, lets only nginx on
+		// this machine reach the hub; "0.0.0.0" listens on every interface.
+		Bind string `yaml:"bind"`
+		Port int    `yaml:"port"`
 	} `yaml:"server"`
 	Auth struct {
 		Enabled       bool   `yaml:"enabled"`
 		SessionSecret string `yaml:"session_secret"`
+		SessionHours  int    `yaml:"session_hours"` // longest a login lasts (default 24)
+		IdleMinutes   int    `yaml:"idle_minutes"`  // sign out after this long unused (default 120)
+		// Failed logins allowed within window_minutes before that IP or
+		// account is refused for lockout_minutes
+		LoginLimits struct {
+			PerIP          int `yaml:"per_ip"`   // default 10
+			PerUser        int `yaml:"per_user"` // default 20
+			WindowMinutes  int `yaml:"window_minutes"`
+			LockoutMinutes int `yaml:"lockout_minutes"`
+		} `yaml:"login_limits"`
 		// Only used when the database is disabled, and imported into an
 		// empty database on first start.
 		Users []ConfigUser `yaml:"users"`
@@ -58,6 +73,7 @@ type Session struct {
 	Username  string
 	Role      string
 	ExpiresAt time.Time
+	LastSeen  time.Time
 }
 
 var config Config
@@ -83,6 +99,9 @@ func main() {
 	} else {
 		auth = newConfigStore("config.yaml")
 	}
+	l := config.Auth.LoginLimits
+	limiter = newLoginLimiter(l.PerIP, l.PerUser,
+		time.Duration(l.WindowMinutes)*time.Minute, time.Duration(l.LockoutMinutes)*time.Minute)
 
 	// Load templates
 	var err error
@@ -124,12 +143,18 @@ func main() {
 	go cleanupSessions()
 
 	// Start server
-	addr := fmt.Sprintf(":%d", config.Server.Port)
+	addr := net.JoinHostPort(config.Server.Bind, strconv.Itoa(config.Server.Port))
 	log.Printf("🏠 Home Services Hub starting on %s", addr)
 	if config.Auth.Enabled {
 		log.Printf("🔒 Authentication enabled")
 	}
-	log.Fatal(http.ListenAndServe(addr, nil))
+	server := &http.Server{
+		Addr:    addr,
+		Handler: secureHeaders(http.DefaultServeMux),
+		// No overall timeouts: the weather stream stays open for hours
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+	log.Fatal(server.ListenAndServe())
 }
 
 func loadConfig(path string) error {
@@ -151,6 +176,28 @@ func loadConfig(path string) error {
 	}
 	if config.Database.User == "" {
 		config.Database.User = "hub_app"
+	}
+	if config.Server.Bind == "" {
+		config.Server.Bind = "127.0.0.1"
+	}
+	if config.Auth.SessionHours <= 0 {
+		config.Auth.SessionHours = 24
+	}
+	if config.Auth.IdleMinutes <= 0 {
+		config.Auth.IdleMinutes = 120
+	}
+	limits := &config.Auth.LoginLimits
+	if limits.PerIP <= 0 {
+		limits.PerIP = 10
+	}
+	if limits.PerUser <= 0 {
+		limits.PerUser = 20
+	}
+	if limits.WindowMinutes <= 0 {
+		limits.WindowMinutes = 15
+	}
+	if limits.LockoutMinutes <= 0 {
+		limits.LockoutMinutes = 15
 	}
 	return nil
 }
@@ -294,29 +341,50 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Method == "POST" {
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 		username := r.FormValue("username")
 		password := r.FormValue("password")
+		ip, userAgent := clientIP(r), r.UserAgent()
+
+		// Refuse without checking the password while the IP or account is locked out
+		if wait := limiter.Blocked(ip, username); wait > 0 {
+			log.Printf("Refused login for %q from %s: locked out for %s more", username, ip, wait.Round(time.Second))
+			showLoginError(w, http.StatusTooManyRequests,
+				fmt.Sprintf("Too many failed sign-ins. Try again in %d min.", int(wait.Minutes())+1))
+			return
+		}
 
 		// Validate credentials
-		ip, userAgent := clientIP(r), r.UserAgent()
 		user, found, err := auth.FindUser(username)
 		if err != nil {
 			log.Printf("Login lookup failed: %v", err)
 			http.Error(w, "Login is unavailable right now", http.StatusServiceUnavailable)
 			return
 		}
-		authenticated := found && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) == nil
+		// Unknown usernames are checked against a dummy hash, so how long the
+		// answer takes doesn't reveal which usernames exist
+		hash := dummyPasswordHash
+		if found {
+			hash = user.PasswordHash
+		}
+		authenticated := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil && found
 		auth.RecordLogin(username, authenticated, ip, userAgent)
 
 		if !authenticated {
-			w.Header().Set("Content-Type", "text/html")
-			templates.ExecuteTemplate(w, "login.html", map[string]string{"Error": "Invalid credentials"})
+			log.Printf("Failed login for %q from %s", username, ip)
+			for _, lock := range limiter.Failure(ip, username, found) {
+				log.Printf("Locked out %s %s for %d minutes after repeated failed logins",
+					lock.Kind, lock.Value, config.Auth.LoginLimits.LockoutMinutes)
+				auth.Audit("hub", "login_lockout", lock.Value, lock.Kind)
+			}
+			showLoginError(w, http.StatusUnauthorized, "Invalid credentials")
 			return
 		}
+		limiter.Success(ip, username)
 
 		// Create session
 		sessionToken := generateSessionToken()
-		expiresAt := time.Now().Add(24 * time.Hour)
+		expiresAt := time.Now().Add(sessionLifetime())
 
 		if err := auth.CreateSession(sessionToken, Session{
 			Username:  username,
@@ -328,15 +396,12 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Detect if we're behind HTTPS proxy (X-Forwarded-Proto header)
-		isHTTPS := r.Header.Get("X-Forwarded-Proto") == "https" || r.TLS != nil
-
 		http.SetCookie(w, &http.Cookie{
 			Name:     "session_token",
 			Value:    sessionToken,
 			Expires:  expiresAt,
 			HttpOnly: true,
-			Secure:   isHTTPS, // Secure only for HTTPS
+			Secure:   isHTTPS(r), // Secure only for HTTPS
 			SameSite: http.SameSiteLaxMode,
 			Path:     "/",
 		})
@@ -359,10 +424,18 @@ func handleLogout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Expires:  time.Now().Add(-1 * time.Hour),
 		HttpOnly: true,
+		Secure:   isHTTPS(r),
+		SameSite: http.SameSiteLaxMode,
 		Path:     "/",
 	})
 
 	http.Redirect(w, r, "/login", http.StatusSeeOther)
+}
+
+func showLoginError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "text/html")
+	w.WriteHeader(status)
+	templates.ExecuteTemplate(w, "login.html", map[string]string{"Error": message})
 }
 
 // Handle change password
@@ -426,17 +499,18 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		if len(newPassword) < 8 {
+		if len(newPassword) < minPasswordLength {
+			msg := fmt.Sprintf("New password must be at least %d characters", minPasswordLength)
 			if expectJSON {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusBadRequest)
-				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "New password must be at least 8 characters"})
+				json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": msg})
 				return
 			}
 			w.Header().Set("Content-Type", "text/html")
 			data := map[string]string{
 				"Username": session.Username,
-				"Error":    "New password must be at least 8 characters",
+				"Error":    msg,
 			}
 			templates.ExecuteTemplate(w, "change-password.html", data)
 			return
@@ -488,6 +562,15 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Sign out every other browser, in case the old password was stolen
+		keep := ""
+		if cookie, err := r.Cookie("session_token"); err == nil {
+			keep = cookie.Value
+		}
+		if err := auth.DeleteUserSessions(session.Username, keep); err != nil {
+			log.Printf("Failed to end other sessions for %s: %v", session.Username, err)
+		}
+
 		log.Printf("Password changed for user: %s", session.Username)
 		auth.Audit(session.Username, "password_change", session.Username, "")
 
@@ -522,6 +605,7 @@ func cleanupSessions() {
 
 	for range ticker.C {
 		auth.Cleanup()
+		limiter.Prune()
 	}
 }
 
@@ -566,10 +650,28 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 		username := ""
 		role := "guest" // Default to guest if not authenticated
 
-		// Allow the weather app's SSE stream through without authentication check.
-		// The page that creates the EventSource is already protected. This is
-		// limited to weather paths so the header can't be used to skip auth on
-		// other services.
+		if config.Auth.Enabled {
+			session := currentSession(r)
+			if session == nil {
+				// No valid session, redirect to login
+				http.Redirect(w, r, "/login", http.StatusSeeOther)
+				return
+			}
+
+			username = session.Username
+			role = session.Role
+
+			// Enforce the service's allowed_roles, not just hide its tile
+			if !canAccessService(r.URL.Path, role) {
+				log.Printf("Denied %s (role %s) access to %s", username, role, r.URL.Path)
+				http.Error(w, "Forbidden: your account does not have access to this service", http.StatusForbidden)
+				return
+			}
+		}
+
+		// The weather app's live stream stays open, so it is proxied without a
+		// timeout. The browser sends the session cookie with it like any other
+		// request, so it needs a login too.
 		isSSE := r.URL.Path == "/api/stream" || r.Header.Get("Accept") == "text/event-stream"
 		if isSSE && serviceBasePath(r.URL.Path) == "/weather" {
 			// Pass through to backend without auth headers
@@ -609,36 +711,15 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 			}
 			defer resp.Body.Close()
 
-			// Copy response headers
+			// Copy response headers (the service's own replace the hub's defaults)
 			for key, values := range resp.Header {
-				for _, value := range values {
-					w.Header().Add(key, value)
-				}
+				w.Header()[key] = values
 			}
 			w.WriteHeader(resp.StatusCode)
 
 			// Stream the response
 			io.Copy(w, resp.Body)
 			return
-		}
-
-		if config.Auth.Enabled {
-			session := currentSession(r)
-			if session == nil {
-				// No valid session, redirect to login
-				http.Redirect(w, r, "/login", http.StatusSeeOther)
-				return
-			}
-
-			username = session.Username
-			role = session.Role
-
-			// Enforce the service's allowed_roles, not just hide its tile
-			if !canAccessService(r.URL.Path, role) {
-				log.Printf("Denied %s (role %s) access to %s", username, role, r.URL.Path)
-				http.Error(w, "Forbidden: your account does not have access to this service", http.StatusForbidden)
-				return
-			}
 		}
 
 		// Build the target URL
@@ -697,7 +778,7 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 
-		// Copy response headers
+		// Copy response headers (the service's own replace the hub's defaults)
 		isJS := strings.HasSuffix(r.URL.Path, ".js") || strings.Contains(r.URL.Path, ".js?")
 		for key, values := range resp.Header {
 			// If JS file, override Content-Type
@@ -705,9 +786,7 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 				w.Header().Set("Content-Type", "application/javascript")
 				continue
 			}
-			for _, value := range values {
-				w.Header().Add(key, value)
-			}
+			w.Header()[key] = values
 		}
 		// If JS file and backend didn't set Content-Type, set it
 		if isJS && w.Header().Get("Content-Type") == "" {
@@ -786,6 +865,11 @@ func handleAddUser(w http.ResponseWriter, r *http.Request) {
 
 	if len(username) > 64 {
 		http.Error(w, "Username must be at most 64 characters", http.StatusBadRequest)
+		return
+	}
+
+	if len(password) < minPasswordLength {
+		http.Error(w, fmt.Sprintf("Password must be at least %d characters", minPasswordLength), http.StatusBadRequest)
 		return
 	}
 

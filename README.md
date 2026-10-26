@@ -127,6 +127,36 @@ with their existing password hashes; after that the database is the source of
 truth and `auth.users` is ignored. Set `enabled: false` to go back to users in
 `config.yaml` and in-memory sessions.
 
+### Login security
+
+The hub is meant to sit behind nginx, so by default it listens only on
+`127.0.0.1` and can't be reached from other machines without going through
+nginx's HTTPS. Set `server.bind: "0.0.0.0"` to listen on every interface.
+
+- **Password guessing:** after 10 failed logins from one IP address, or 20
+  for one account from anywhere, within 15 minutes, that IP or account is
+  refused for 15 minutes without the password being checked. Lockouts show
+  in the audit log on the User Management page. A restart clears them.
+- **Sessions** end 24 hours after login, or after 2 hours without use.
+  Changing your password signs out all your other browsers.
+- **New passwords** must be at least 12 characters.
+- Form posts and API calls from other websites are refused.
+
+All of these have defaults; to change them:
+
+```yaml
+server:
+  bind: "127.0.0.1"
+auth:
+  session_hours: 24
+  idle_minutes: 120
+  login_limits:
+    per_ip: 10
+    per_user: 20
+    window_minutes: 15
+    lockout_minutes: 15
+```
+
 ## nginx Routing
 
 The gateway uses nginx to route requests to different services:
