@@ -1,0 +1,13 @@
+[Unit]
+Description=Back up MariaDB databases to the HDD and the NAS
+After=mariadb.service network-online.target remote-fs.target
+Wants=network-online.target
+Requires=mariadb.service
+RequiresMountsFor=/mnt/hdd
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mariadb-backup.sh
+# Stay out of the way of the apps
+Nice=10
+IOSchedulingClass=idle

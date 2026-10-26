@@ -1,0 +1,11 @@
+# Settings for /usr/local/bin/mariadb-backup.sh
+# Install as /etc/default/mariadb-backup
+
+BACKUP_DIR=/mnt/hdd/backups/mariadb
+KEEP_DAYS=14
+
+# NAS copy: the NFS share's db_backups/mariadb folder, mounted on its own
+# (like the weewx Pi mounts db_backups/weewx). Leave NAS_MOUNT empty to keep
+# local copies only.
+NAS_MOUNT=/mnt/synology_backup
+NAS_DIR=/mnt/synology_backup
