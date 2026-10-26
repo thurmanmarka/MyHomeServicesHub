@@ -38,6 +38,11 @@ type Config struct {
 		SessionSecret string `yaml:"session_secret"`
 		SessionHours  int    `yaml:"session_hours"` // longest a login lasts (default 24)
 		IdleMinutes   int    `yaml:"idle_minutes"`  // sign out after this long unused (default 120)
+		// Accounts that may only be used from the home network
+		LocalOnlyUsers []string `yaml:"local_only_users"`
+		// What counts as the home network (CIDRs). Default: private addresses
+		// (10.x, 172.16-31.x, 192.168.x) and this machine.
+		LocalNetworks []string `yaml:"local_networks"`
 		// Failed logins allowed within window_minutes before that IP or
 		// account is refused for lockout_minutes
 		LoginLimits struct {
@@ -185,6 +190,14 @@ func loadConfig(path string) error {
 	}
 	if config.Auth.IdleMinutes <= 0 {
 		config.Auth.IdleMinutes = 120
+	}
+	localNets = nil
+	for _, cidr := range config.Auth.LocalNetworks {
+		_, n, err := net.ParseCIDR(cidr)
+		if err != nil {
+			return fmt.Errorf("auth.local_networks: %w", err)
+		}
+		localNets = append(localNets, n)
 	}
 	limits := &config.Auth.LoginLimits
 	if limits.PerIP <= 0 {
@@ -351,6 +364,15 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Refused login for %q from %s: locked out for %s more", username, ip, wait.Round(time.Second))
 			showLoginError(w, http.StatusTooManyRequests,
 				fmt.Sprintf("Too many failed sign-ins. Try again in %d min.", int(wait.Minutes())+1))
+			return
+		}
+
+		// Home-network-only accounts are refused elsewhere without checking
+		// the password, so their password can't be guessed from outside
+		if !allowedFrom(username, ip) {
+			log.Printf("Refused login for %q from %s: account is limited to the home network", username, ip)
+			auth.RecordLogin(username, false, ip, userAgent)
+			showLoginError(w, http.StatusUnauthorized, "Invalid credentials")
 			return
 		}
 

@@ -80,6 +80,11 @@ func currentSession(r *http.Request) *Session {
 	if !ok {
 		return nil
 	}
+	// Checked on every request, so taking a laptop off the home network
+	// ends a home-network-only session
+	if !allowedFrom(s.Username, clientIP(r)) {
+		return nil
+	}
 	return s
 }
 

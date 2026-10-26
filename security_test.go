@@ -1,8 +1,11 @@
 package main
 
 import (
+	"net"
+	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -42,6 +45,62 @@ func TestDummyPasswordHashIsValid(t *testing.T) {
 	}
 	if cost != bcrypt.DefaultCost {
 		t.Errorf("dummy hash cost %d, want %d so it takes as long as a real check", cost, bcrypt.DefaultCost)
+	}
+}
+
+func TestIsLocalIP(t *testing.T) {
+	defer func() { localNets = nil }()
+	for ip, want := range map[string]bool{
+		"192.168.86.50": true,
+		"10.0.0.5":      true,
+		"127.0.0.1":     true,
+		"::1":           true,
+		"203.0.113.9":   false,
+		"8.8.8.8":       false,
+		"not-an-ip":     false,
+	} {
+		if got := isLocalIP(ip); got != want {
+			t.Errorf("default networks: isLocalIP(%s) = %v, want %v", ip, got, want)
+		}
+	}
+
+	_, n, _ := net.ParseCIDR("192.168.86.0/24")
+	localNets = []*net.IPNet{n}
+	if isLocalIP("10.0.0.5") {
+		t.Error("10.0.0.5 is outside the configured network")
+	}
+	if !isLocalIP("192.168.86.50") || !isLocalIP("127.0.0.1") {
+		t.Error("the configured network and this machine should be local")
+	}
+}
+
+func TestLocalOnlySessionEndsOffNetwork(t *testing.T) {
+	saved := config
+	defer func() { config = saved }()
+	config.Auth.LocalOnlyUsers = []string{"admin"}
+	config.Auth.IdleMinutes = 60
+	config.Auth.Users = []ConfigUser{{Username: "admin", Role: "admin"}, {Username: "mark", Role: "admin"}}
+	auth = newConfigStore("unused.yaml")
+
+	for _, name := range []string{"admin", "mark"} {
+		auth.CreateSession(name+"-token", Session{Username: name, ExpiresAt: time.Now().Add(time.Hour)}, "", "")
+	}
+	request := func(token, ip string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = "127.0.0.1:50000" // via nginx
+		r.Header.Set("X-Real-IP", ip)
+		r.AddCookie(&http.Cookie{Name: "session_token", Value: token})
+		return r
+	}
+
+	if currentSession(request("admin-token", "192.168.86.50")) == nil {
+		t.Error("admin should be signed in at home")
+	}
+	if currentSession(request("admin-token", "203.0.113.9")) != nil {
+		t.Error("admin's session should not work from outside")
+	}
+	if currentSession(request("mark-token", "203.0.113.9")) == nil {
+		t.Error("other admins should work from outside")
 	}
 }
 

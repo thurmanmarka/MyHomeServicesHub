@@ -141,6 +141,11 @@ nginx's HTTPS. Set `server.bind: "0.0.0.0"` to listen on every interface.
   Changing your password signs out all your other browsers.
 - **New passwords** must be at least 12 characters.
 - Form posts and API calls from other websites are refused.
+- **Home-network-only accounts:** accounts listed in `local_only_users` can
+  only sign in from the home network, and their sessions stop working when
+  the browser is elsewhere. From outside, their logins are refused without
+  checking the password, so it can't be guessed. "Home network" means private
+  addresses (192.168.x, 10.x, 172.16–31.x) unless `local_networks` says otherwise.
 
 All of these have defaults; to change them:
 
@@ -150,6 +155,8 @@ server:
 auth:
   session_hours: 24
   idle_minutes: 120
+  local_only_users: ["admin"]          # default: none
+  local_networks: ["192.168.86.0/24"]  # default: all private addresses
   login_limits:
     per_ip: 10
     per_user: 20

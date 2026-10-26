@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 )
 
@@ -14,6 +15,35 @@ const minPasswordLength = 12
 // dummyPasswordHash is a bcrypt hash (same cost as real ones) of a random
 // password, compared against when a username doesn't exist.
 const dummyPasswordHash = "$2a$10$mLUUV7de2qBtTdlzWCw5CO0.AUDMHOuohR9LHetMSGhk1lo8Oz1tO"
+
+// localNets is auth.local_networks, parsed; empty means private addresses.
+var localNets []*net.IPNet
+
+// isLocalIP reports whether ip is on the home network (or this machine).
+func isLocalIP(ip string) bool {
+	addr := net.ParseIP(ip)
+	if addr == nil {
+		return false
+	}
+	if addr.IsLoopback() {
+		return true
+	}
+	if len(localNets) == 0 {
+		return addr.IsPrivate()
+	}
+	for _, n := range localNets {
+		if n.Contains(addr) {
+			return true
+		}
+	}
+	return false
+}
+
+// allowedFrom reports whether username may sign in or stay signed in from ip,
+// given auth.local_only_users.
+func allowedFrom(username, ip string) bool {
+	return !slices.Contains(config.Auth.LocalOnlyUsers, username) || isLocalIP(ip)
+}
 
 // secureHeaders adds browser protections to every response, and refuses
 // form posts and API calls sent from another site (cross-site request
