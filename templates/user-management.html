@@ -261,10 +261,36 @@
             font-size: 0.9rem;
         }
 
+        .muted { color: var(--text-muted); font-size: 0.9rem; }
+        .nowrap { white-space: nowrap; }
+
+        .history-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+            gap: 24px;
+        }
+
+        .history-grid .users-table { margin-bottom: 0; overflow-x: auto; }
+        .history-grid td { padding: 10px 16px; }
+
+        .table-title {
+            padding: 16px 16px 4px;
+            margin: 0;
+        }
+
+        .result { font-size: 0.85rem; font-weight: 600; }
+        .result-ok { color: #047857; }
+        .result-fail { color: var(--danger); }
+        [data-theme="dark"] .result-ok { color: #34d399; }
+
         @media (max-width: 900px) {
             .form-row {
                 grid-template-columns: 1fr 1fr;
             }
+        }
+
+        @media (max-width: 640px) {
+            .history-grid { grid-template-columns: 1fr; }
         }
 
         @media (max-width: 640px) {
@@ -318,6 +344,7 @@
                         <tr>
                             <th>Username</th>
                             <th>Role</th>
+                            {{if .HasHistory}}<th>Last login</th>{{end}}
                             <th>Actions</th>
                         </tr>
                     </thead>
@@ -333,6 +360,9 @@
                             <td>
                                 <span class="role-badge role-{{.Role}}">{{.Role}}</span>
                             </td>
+                            {{if $.HasHistory}}
+                            <td class="muted">{{if .LastLogin}}{{.LastLogin.Format "Jan 2, 3:04 PM"}}{{else}}Never{{end}}</td>
+                            {{end}}
                             <td>
                                 <div class="actions">
                                     {{if or (eq .Username "admin") (eq .Username "guest")}}
@@ -361,6 +391,66 @@
                     </tbody>
                 </table>
             </div>
+
+            {{if .HasHistory}}
+            <div class="history-grid">
+                <div class="users-table">
+                    <h2 class="table-title">Recent sign-ins</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>When</th>
+                                <th>User</th>
+                                <th>Result</th>
+                                <th>From</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .Logins}}
+                            <tr>
+                                <td class="muted nowrap">{{.At.Format "Jan 2, 3:04 PM"}}</td>
+                                <td>{{.Username}}</td>
+                                <td>{{if .Success}}<span class="result result-ok">✓ Signed in</span>{{else}}<span class="result result-fail">✕ Failed</span>{{end}}</td>
+                                <td class="muted" title="{{.UserAgent}}">{{.IP}}</td>
+                            </tr>
+                            {{else}}
+                            <tr><td colspan="4" class="muted">No sign-ins recorded yet</td></tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+
+                <div class="users-table">
+                    <h2 class="table-title">Audit log</h2>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>When</th>
+                                <th>Who</th>
+                                <th>Change</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {{range .Audit}}
+                            <tr>
+                                <td class="muted nowrap">{{.At.Format "Jan 2, 3:04 PM"}}</td>
+                                <td>{{.Actor}}</td>
+                                <td>
+                                    {{if eq .Action "user_add"}}Added user <strong>{{.Target}}</strong> ({{.Detail}})
+                                    {{else if eq .Action "user_delete"}}Deleted user <strong>{{.Target}}</strong>
+                                    {{else if eq .Action "role_change"}}Changed <strong>{{.Target}}</strong>'s role: {{.Detail}}
+                                    {{else if eq .Action "password_change"}}Changed password{{if ne .Actor .Target}} for <strong>{{.Target}}</strong>{{end}}
+                                    {{else}}{{.Action}} {{.Target}} {{.Detail}}{{end}}
+                                </td>
+                            </tr>
+                            {{else}}
+                            <tr><td colspan="3" class="muted">No changes recorded yet</td></tr>
+                            {{end}}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {{end}}
         </div>
     </div>
 

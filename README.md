@@ -106,6 +106,27 @@ services:
     enabled: false  # Set to true when service is ready
 ```
 
+### Database (users and sessions)
+
+With a `database` section, users, login sessions, sign-in history and an audit
+log of user changes are kept in MariaDB. Sessions then survive restarts, and
+role changes or deleted users take effect immediately.
+
+```yaml
+database:
+  enabled: true
+  host: "127.0.0.1"
+  port: 3306
+  name: "hub_db"
+  user: "hub_app"
+  password: "..."
+```
+
+On first start the users under `auth.users` are copied into the empty database
+with their existing password hashes; after that the database is the source of
+truth and `auth.users` is ignored. Set `enabled: false` to go back to users in
+`config.yaml` and in-memory sessions.
+
 ## nginx Routing
 
 The gateway uses nginx to route requests to different services:

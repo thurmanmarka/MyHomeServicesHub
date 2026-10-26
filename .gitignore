@@ -3,8 +3,6 @@ hub-gateway
 hub-gateway.exe
 *.exe
 
-# Go files
-go.sum
 
 # Configuration files with sensitive data
 config.yaml

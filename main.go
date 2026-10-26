@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"io"
@@ -11,12 +12,17 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
 	"gopkg.in/yaml.v3"
 )
+
+type ConfigUser struct {
+	Username string `yaml:"username"`
+	Password string `yaml:"password"` // bcrypt hash
+	Role     string `yaml:"role"`
+}
 
 type Config struct {
 	Server struct {
@@ -25,12 +31,19 @@ type Config struct {
 	Auth struct {
 		Enabled       bool   `yaml:"enabled"`
 		SessionSecret string `yaml:"session_secret"`
-		Users         []struct {
-			Username string `yaml:"username"`
-			Password string `yaml:"password"` // bcrypt hash
-			Role     string `yaml:"role"`
-		} `yaml:"users"`
+		// Only used when the database is disabled, and imported into an
+		// empty database on first start.
+		Users []ConfigUser `yaml:"users"`
 	} `yaml:"auth"`
+	Database struct {
+		// When disabled, users stay in this file and sessions in memory
+		Enabled  bool   `yaml:"enabled"`
+		Host     string `yaml:"host"`
+		Port     int    `yaml:"port"`
+		Name     string `yaml:"name"`
+		User     string `yaml:"user"`
+		Password string `yaml:"password"`
+	} `yaml:"database"`
 	Services []struct {
 		Name         string   `yaml:"name"`
 		Description  string   `yaml:"description"`
@@ -49,13 +62,26 @@ type Session struct {
 
 var config Config
 var templates *template.Template
-var sessions = make(map[string]*Session)
-var sessionsMux sync.RWMutex
 
 func main() {
 	// Load configuration
 	if err := loadConfig("config.yaml"); err != nil {
 		log.Fatalf("Failed to load config: %v", err)
+	}
+
+	// Users and sessions live in MariaDB, or in config.yaml and memory
+	if config.Database.Enabled {
+		store, err := openSQLStore()
+		if err != nil {
+			log.Fatalf("Failed to open database: %v", err)
+		}
+		if err := store.importConfigUsers(); err != nil {
+			log.Fatalf("Failed to import users: %v", err)
+		}
+		auth = store
+		log.Printf("🗄️  Using MariaDB database %s on %s:%d", config.Database.Name, config.Database.Host, config.Database.Port)
+	} else {
+		auth = newConfigStore("config.yaml")
 	}
 
 	// Load templates
@@ -111,7 +137,22 @@ func loadConfig(path string) error {
 	if err != nil {
 		return err
 	}
-	return yaml.Unmarshal(data, &config)
+	if err := yaml.Unmarshal(data, &config); err != nil {
+		return err
+	}
+	if config.Database.Host == "" {
+		config.Database.Host = "127.0.0.1"
+	}
+	if config.Database.Port == 0 {
+		config.Database.Port = 3306
+	}
+	if config.Database.Name == "" {
+		config.Database.Name = "hub_db"
+	}
+	if config.Database.User == "" {
+		config.Database.User = "hub_app"
+	}
+	return nil
 }
 
 func saveConfig(path string) error {
@@ -131,17 +172,13 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 func handleLanding(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 
-	// Get user role from session
+	// Get user from session
 	userRole := "admin" // Default if auth disabled
+	username := ""
 	if config.Auth.Enabled {
-		cookie, err := r.Cookie("session_token")
-		if err == nil {
-			sessionsMux.RLock()
-			session, exists := sessions[cookie.Value]
-			sessionsMux.RUnlock()
-			if exists {
-				userRole = session.Role
-			}
+		if session := currentSession(r); session != nil {
+			userRole = session.Role
+			username = session.Username
 		}
 	}
 
@@ -194,20 +231,6 @@ func handleLanding(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get username from session
-	username := ""
-	if config.Auth.Enabled {
-		cookie, _ := r.Cookie("session_token")
-		if cookie != nil {
-			sessionsMux.RLock()
-			session, exists := sessions[cookie.Value]
-			sessionsMux.RUnlock()
-			if exists {
-				username = session.Username
-			}
-		}
-	}
-
 	data := PageData{
 		Services: filteredServices,
 		Username: username,
@@ -228,17 +251,7 @@ func authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		cookie, err := r.Cookie("session_token")
-		if err != nil {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
-			return
-		}
-
-		sessionsMux.RLock()
-		session, exists := sessions[cookie.Value]
-		sessionsMux.RUnlock()
-
-		if !exists || session.ExpiresAt.Before(time.Now()) {
+		if currentSession(r) == nil {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
@@ -255,17 +268,8 @@ func adminOnly(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		cookie, err := r.Cookie("session_token")
-		if err != nil {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
-			return
-		}
-
-		sessionsMux.RLock()
-		session, exists := sessions[cookie.Value]
-		sessionsMux.RUnlock()
-
-		if !exists || session.ExpiresAt.Before(time.Now()) {
+		session := currentSession(r)
+		if session == nil {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
@@ -294,18 +298,15 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		password := r.FormValue("password")
 
 		// Validate credentials
-		var userRole string
-		authenticated := false
-		for _, user := range config.Auth.Users {
-			if user.Username == username {
-				err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(password))
-				if err == nil {
-					authenticated = true
-					userRole = user.Role
-					break
-				}
-			}
+		ip, userAgent := clientIP(r), r.UserAgent()
+		user, found, err := auth.FindUser(username)
+		if err != nil {
+			log.Printf("Login lookup failed: %v", err)
+			http.Error(w, "Login is unavailable right now", http.StatusServiceUnavailable)
+			return
 		}
+		authenticated := found && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)) == nil
+		auth.RecordLogin(username, authenticated, ip, userAgent)
 
 		if !authenticated {
 			w.Header().Set("Content-Type", "text/html")
@@ -317,13 +318,15 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 		sessionToken := generateSessionToken()
 		expiresAt := time.Now().Add(24 * time.Hour)
 
-		sessionsMux.Lock()
-		sessions[sessionToken] = &Session{
+		if err := auth.CreateSession(sessionToken, Session{
 			Username:  username,
-			Role:      userRole,
+			Role:      user.Role,
 			ExpiresAt: expiresAt,
+		}, ip, userAgent); err != nil {
+			log.Printf("Failed to create session for %s: %v", username, err)
+			http.Error(w, "Login is unavailable right now", http.StatusServiceUnavailable)
+			return
 		}
-		sessionsMux.Unlock()
 
 		// Detect if we're behind HTTPS proxy (X-Forwarded-Proto header)
 		isHTTPS := r.Header.Get("X-Forwarded-Proto") == "https" || r.TLS != nil
@@ -348,9 +351,7 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 func handleLogout(w http.ResponseWriter, r *http.Request) {
 	cookie, err := r.Cookie("session_token")
 	if err == nil {
-		sessionsMux.Lock()
-		delete(sessions, cookie.Value)
-		sessionsMux.Unlock()
+		auth.DeleteSession(cookie.Value)
 	}
 
 	http.SetCookie(w, &http.Cookie{
@@ -369,23 +370,8 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 	expectJSON := strings.Contains(r.Header.Get("Accept"), "application/json")
 
 	// Get current user from session
-	cookie, err := r.Cookie("session_token")
-	if err != nil {
-		if expectJSON {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(w).Encode(map[string]string{"status": "error", "error": "not authenticated"})
-			return
-		}
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
-		return
-	}
-
-	sessionsMux.RLock()
-	session, exists := sessions[cookie.Value]
-	sessionsMux.RUnlock()
-
-	if !exists {
+	session := currentSession(r)
+	if session == nil {
 		if expectJSON {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -457,20 +443,11 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Verify current password
-		var userIndex int
-		var userFound bool
-		for i, user := range config.Auth.Users {
-			if user.Username == session.Username {
-				err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(currentPassword))
-				if err == nil {
-					userIndex = i
-					userFound = true
-					break
-				}
-			}
+		user, found, err := auth.FindUser(session.Username)
+		if err != nil {
+			log.Printf("User lookup failed: %v", err)
 		}
-
-		if !userFound {
+		if !found || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(currentPassword)) != nil {
 			if expectJSON {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusUnauthorized)
@@ -499,12 +476,8 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Update config in memory
-		config.Auth.Users[userIndex].Password = string(hashedPassword)
-
-		// Save to config file
-		if err := saveConfig("config.yaml"); err != nil {
-			log.Printf("Failed to save config: %v", err)
+		if err := auth.SetPassword(session.Username, string(hashedPassword)); err != nil {
+			log.Printf("Failed to save new password: %v", err)
 			if expectJSON {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusInternalServerError)
@@ -516,6 +489,7 @@ func handleChangePassword(w http.ResponseWriter, r *http.Request) {
 		}
 
 		log.Printf("Password changed for user: %s", session.Username)
+		auth.Audit(session.Username, "password_change", session.Username, "")
 
 		if expectJSON {
 			w.Header().Set("Content-Type", "application/json")
@@ -547,13 +521,7 @@ func cleanupSessions() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		sessionsMux.Lock()
-		for token, session := range sessions {
-			if session.ExpiresAt.Before(time.Now()) {
-				delete(sessions, token)
-			}
-		}
-		sessionsMux.Unlock()
+		auth.Cleanup()
 	}
 }
 
@@ -655,19 +623,9 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 		}
 
 		if config.Auth.Enabled {
-			cookie, err := r.Cookie("session_token")
-			if err != nil {
-				// No session, redirect to login
-				http.Redirect(w, r, "/login", http.StatusSeeOther)
-				return
-			}
-
-			sessionsMux.RLock()
-			session, exists := sessions[cookie.Value]
-			sessionsMux.RUnlock()
-
-			if !exists || session.ExpiresAt.Before(time.Now()) {
-				// Invalid or expired session
+			session := currentSession(r)
+			if session == nil {
+				// No valid session, redirect to login
 				http.Redirect(w, r, "/login", http.StatusSeeOther)
 				return
 			}
@@ -766,33 +724,43 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 
 // User management handlers
 
+// actor names who made a change, for the audit log. With auth disabled there
+// is no session, so changes are attributed to "admin".
+func actor(r *http.Request) string {
+	if session := currentSession(r); session != nil {
+		return session.Username
+	}
+	return "admin"
+}
+
 func handleUserManagement(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html")
 
-	cookie, _ := r.Cookie("session_token")
-	sessionsMux.RLock()
-	session, _ := sessions[cookie.Value]
-	sessionsMux.RUnlock()
-
-	data := struct {
-		Username string
-		Users    []struct {
-			Username string
-			Role     string
-		}
-	}{
-		Username: session.Username,
+	users, err := auth.ListUsers()
+	if err != nil {
+		log.Printf("Failed to list users: %v", err)
+		http.Error(w, "Failed to load users", http.StatusInternalServerError)
+		return
 	}
 
-	// Build user list (exclude passwords)
-	for _, user := range config.Auth.Users {
-		data.Users = append(data.Users, struct {
-			Username string
-			Role     string
-		}{
-			Username: user.Username,
-			Role:     user.Role,
-		})
+	data := struct {
+		Username   string
+		Users      []User
+		HasHistory bool
+		Logins     []LoginEvent
+		Audit      []AuditEvent
+	}{
+		Username:   actor(r),
+		Users:      users,
+		HasHistory: auth.HasHistory(),
+	}
+	if data.HasHistory {
+		if data.Logins, err = auth.RecentLogins(25); err != nil {
+			log.Printf("Failed to load login history: %v", err)
+		}
+		if data.Audit, err = auth.RecentAudit(25); err != nil {
+			log.Printf("Failed to load audit log: %v", err)
+		}
 	}
 
 	if err := templates.ExecuteTemplate(w, "user-management.html", data); err != nil {
@@ -816,17 +784,14 @@ func handleAddUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if role != "admin" && role != "user" && role != "guest" {
-		http.Error(w, "Invalid role", http.StatusBadRequest)
+	if len(username) > 64 {
+		http.Error(w, "Username must be at most 64 characters", http.StatusBadRequest)
 		return
 	}
 
-	// Check if user already exists
-	for _, user := range config.Auth.Users {
-		if user.Username == username {
-			http.Error(w, "User already exists", http.StatusConflict)
-			return
-		}
+	if role != "admin" && role != "user" && role != "guest" {
+		http.Error(w, "Invalid role", http.StatusBadRequest)
+		return
 	}
 
 	// Hash password
@@ -836,25 +801,19 @@ func handleAddUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Add user to config
-	config.Auth.Users = append(config.Auth.Users, struct {
-		Username string `yaml:"username"`
-		Password string `yaml:"password"`
-		Role     string `yaml:"role"`
-	}{
-		Username: username,
-		Password: string(hashedPassword),
-		Role:     role,
-	})
-
-	// Save config
-	if err := saveConfig("config.yaml"); err != nil {
-		log.Printf("Failed to save config: %v", err)
+	err = auth.AddUser(User{Username: username, PasswordHash: string(hashedPassword), Role: role})
+	if errors.Is(err, ErrUserExists) {
+		http.Error(w, "User already exists", http.StatusConflict)
+		return
+	}
+	if err != nil {
+		log.Printf("Failed to add user: %v", err)
 		http.Error(w, "Failed to save user", http.StatusInternalServerError)
 		return
 	}
 
 	log.Printf("User added: %s (role: %s)", username, role)
+	auth.Audit(actor(r), "user_add", username, "role "+role)
 	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }
 
@@ -867,12 +826,7 @@ func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	username := r.FormValue("username")
 
 	// Don't allow deleting yourself
-	cookie, _ := r.Cookie("session_token")
-	sessionsMux.RLock()
-	session, _ := sessions[cookie.Value]
-	sessionsMux.RUnlock()
-
-	if session.Username == username {
+	if actor(r) == username {
 		http.Error(w, "Cannot delete yourself", http.StatusBadRequest)
 		return
 	}
@@ -881,37 +835,22 @@ func handleDeleteUser(w http.ResponseWriter, r *http.Request) {
 	if username == "admin" || username == "guest" {
 		http.Error(w, "Cannot delete protected user", http.StatusBadRequest)
 		return
-	} // Find and remove user
-	found := false
-	newUsers := []struct {
-		Username string `yaml:"username"`
-		Password string `yaml:"password"`
-		Role     string `yaml:"role"`
-	}{}
-
-	for _, user := range config.Auth.Users {
-		if user.Username != username {
-			newUsers = append(newUsers, user)
-		} else {
-			found = true
-		}
 	}
 
-	if !found {
+	// Deleting a user also ends their sessions
+	err := auth.DeleteUser(username)
+	if errors.Is(err, ErrUserNotFound) {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
-
-	config.Auth.Users = newUsers
-
-	// Save config
-	if err := saveConfig("config.yaml"); err != nil {
-		log.Printf("Failed to save config: %v", err)
+	if err != nil {
+		log.Printf("Failed to delete user: %v", err)
 		http.Error(w, "Failed to delete user", http.StatusInternalServerError)
 		return
 	}
 
 	log.Printf("User deleted: %s", username)
+	auth.Audit(actor(r), "user_delete", username, "")
 	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }
 
@@ -933,28 +872,27 @@ func handleUpdateUser(w http.ResponseWriter, r *http.Request) {
 	if newRole != "admin" && newRole != "user" && newRole != "guest" {
 		http.Error(w, "Invalid role", http.StatusBadRequest)
 		return
-	} // Find and update user
-	found := false
-	for i, user := range config.Auth.Users {
-		if user.Username == username {
-			config.Auth.Users[i].Role = newRole
-			found = true
-			break
-		}
 	}
 
-	if !found {
+	old, found, err := auth.FindUser(username)
+	if err == nil && !found {
+		err = ErrUserNotFound
+	}
+	if err == nil {
+		err = auth.SetRole(username, newRole)
+	}
+	if errors.Is(err, ErrUserNotFound) {
 		http.Error(w, "User not found", http.StatusNotFound)
 		return
 	}
-
-	// Save config
-	if err := saveConfig("config.yaml"); err != nil {
-		log.Printf("Failed to save config: %v", err)
+	if err != nil {
+		log.Printf("Failed to update user: %v", err)
 		http.Error(w, "Failed to update user", http.StatusInternalServerError)
 		return
 	}
 
+	// Takes effect on the user's next request; no need to log in again
 	log.Printf("User updated: %s -> role: %s", username, newRole)
+	auth.Audit(actor(r), "role_change", username, old.Role+" → "+newRole)
 	http.Redirect(w, r, "/admin/users", http.StatusSeeOther)
 }
