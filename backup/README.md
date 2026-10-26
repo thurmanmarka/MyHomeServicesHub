@@ -94,9 +94,9 @@ Control's saved secrets back (both files, always together):
 B=/mnt/hdd/backups/mariadb/2026-10-25/files
 sudo systemctl stop wifi-control
 sudo install -m 600 -o myhomeservices -g myhomeservices \
-  $B/home/myhomeservices/wifi-control/secrets.json \
-  $B/home/myhomeservices/wifi-control/secret.key \
-  /home/myhomeservices/wifi-control/
+  $B/home/myhomeservices/MyWifiControl/secrets.json \
+  $B/home/myhomeservices/MyWifiControl/secret.key \
+  /home/myhomeservices/MyWifiControl/
 sudo systemctl start wifi-control
 ```
 

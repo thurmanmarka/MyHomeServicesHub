@@ -12,4 +12,4 @@ NAS_DIR=/mnt/synology_backup
 
 # Files to back up alongside the databases (space-separated). Wi-Fi Control's
 # saved passwords only decrypt with their key, so the two always go together.
-EXTRA_FILES="/home/myhomeservices/wifi-control/secrets.json /home/myhomeservices/wifi-control/secret.key"
+EXTRA_FILES="/home/myhomeservices/MyWifiControl/secrets.json /home/myhomeservices/MyWifiControl/secret.key"
