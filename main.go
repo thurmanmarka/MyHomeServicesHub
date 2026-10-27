@@ -51,6 +51,11 @@ type Config struct {
 			WindowMinutes  int `yaml:"window_minutes"`
 			LockoutMinutes int `yaml:"lockout_minutes"`
 		} `yaml:"login_limits"`
+		// Weather dashboard loads per minute a guest IP may make; each
+		// weather API endpoint is capped accordingly (default 15)
+		GuestLoadsPerMinute int `yaml:"guest_loads_per_minute"`
+		// Successful guest logins allowed per IP per hour (default 10)
+		GuestLoginsPerHour int `yaml:"guest_logins_per_hour"`
 		// Only used when the database is disabled, and imported into an
 		// empty database on first start.
 		Users []ConfigUser `yaml:"users"`
@@ -107,6 +112,8 @@ func main() {
 	l := config.Auth.LoginLimits
 	limiter = newLoginLimiter(l.PerIP, l.PerUser,
 		time.Duration(l.WindowMinutes)*time.Minute, time.Duration(l.LockoutMinutes)*time.Minute)
+	guestAPILimiter = newCallLimiter(time.Minute)
+	guestLoginLimiter = newCallLimiter(time.Hour)
 
 	// Load templates
 	var err error
@@ -211,6 +218,12 @@ func loadConfig(path string) error {
 	}
 	if limits.LockoutMinutes <= 0 {
 		limits.LockoutMinutes = 15
+	}
+	if config.Auth.GuestLoadsPerMinute <= 0 {
+		config.Auth.GuestLoadsPerMinute = 15
+	}
+	if config.Auth.GuestLoginsPerHour <= 0 {
+		config.Auth.GuestLoginsPerHour = 10
 	}
 	return nil
 }
@@ -390,6 +403,22 @@ func handleLogin(w http.ResponseWriter, r *http.Request) {
 			hash = user.PasswordHash
 		}
 		authenticated := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)) == nil && found
+
+		// The guest password is public, so each guest login is capped per IP
+		// before it writes a session and sign-in record to the database.
+		// A browser already signed in as guest keeps its session.
+		if authenticated && user.Role == "guest" {
+			if s := currentSession(r); s != nil && s.Username == username {
+				http.Redirect(w, r, "/", http.StatusSeeOther)
+				return
+			}
+			if wait := guestLoginLimiter.Allow(ip, config.Auth.GuestLoginsPerHour); wait > 0 {
+				log.Printf("Refused guest login for %q from %s: too many guest logins", username, ip)
+				showLoginError(w, http.StatusTooManyRequests,
+					fmt.Sprintf("Too many guest sign-ins. Try again in %d min.", int(wait.Minutes())+1))
+				return
+			}
+		}
 		auth.RecordLogin(username, authenticated, ip, userAgent)
 
 		if !authenticated {
@@ -628,6 +657,8 @@ func cleanupSessions() {
 	for range ticker.C {
 		auth.Cleanup()
 		limiter.Prune()
+		guestAPILimiter.Prune()
+		guestLoginLimiter.Prune()
 	}
 }
 
@@ -761,6 +792,18 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 		if targetPath == "" {
 			targetPath = "/"
 		}
+
+		// Guests share one public login, so cap how often they can make the
+		// weather app query its database
+		if role == "guest" && serviceBasePath(r.URL.Path) == "/weather" && strings.HasPrefix(targetPath, "/api/") {
+			if wait := guestAPILimiter.Allow(clientIP(r)+" "+targetPath, guestAPILimit(targetPath)); wait > 0 {
+				log.Printf("Guest rate limit: %s calling %s", clientIP(r), targetPath)
+				w.Header().Set("Retry-After", strconv.Itoa(int(wait.Seconds())+1))
+				http.Error(w, "Too many requests: please wait a minute and try again", http.StatusTooManyRequests)
+				return
+			}
+		}
+
 		proxyURL := targetURL + strings.TrimPrefix(targetPath, "/")
 		if r.URL.RawQuery != "" {
 			proxyURL += "?" + r.URL.RawQuery

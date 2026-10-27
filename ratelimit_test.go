@@ -96,3 +96,62 @@ func TestLimiterPrune(t *testing.T) {
 		t.Errorf("stale entries left after prune: %d", len(l.entries))
 	}
 }
+
+func testCallLimiter(window time.Duration) (*callLimiter, *time.Time) {
+	now := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
+	l := newCallLimiter(window)
+	l.now = func() time.Time { return now }
+	return l, &now
+}
+
+func TestCallLimiterCapsPerKey(t *testing.T) {
+	l, now := testCallLimiter(time.Minute)
+	for i := 0; i < 15; i++ {
+		if wait := l.Allow("1.2.3.4 /api/barometer", 15); wait != 0 {
+			t.Fatalf("call %d refused too early", i+1)
+		}
+	}
+	if wait := l.Allow("1.2.3.4 /api/barometer", 15); wait != time.Minute {
+		t.Errorf("16th call within a minute: wait %s, want 1m", wait)
+	}
+	if l.Allow("1.2.3.4 /api/rain", 15) != 0 {
+		t.Error("other keys have their own count")
+	}
+
+	*now = now.Add(time.Minute + time.Second)
+	if l.Allow("1.2.3.4 /api/barometer", 15) != 0 {
+		t.Error("calls older than the window should not count")
+	}
+}
+
+func TestCallLimiterRefusedCallsDontCount(t *testing.T) {
+	l, now := testCallLimiter(time.Hour)
+	l.Allow("1.2.3.4", 1)
+	for i := 0; i < 5; i++ {
+		l.Allow("1.2.3.4", 1)
+	}
+	*now = now.Add(time.Hour + time.Second)
+	if l.Allow("1.2.3.4", 1) != 0 {
+		t.Error("refused calls kept the key blocked past the window")
+	}
+}
+
+func TestCallLimiterPrune(t *testing.T) {
+	l, now := testCallLimiter(time.Minute)
+	l.Allow("1.2.3.4 /api/rain", 15)
+	*now = now.Add(2 * time.Minute)
+	l.Prune()
+	if len(l.entries) != 0 {
+		t.Errorf("stale entries kept: %v", l.entries)
+	}
+}
+
+func TestGuestAPILimitCountsRepeatedEndpoints(t *testing.T) {
+	config.Auth.GuestLoadsPerMinute = 15
+	if got := guestAPILimit("/api/wind"); got != 30 {
+		t.Errorf("wind limit %d, want 30", got)
+	}
+	if got := guestAPILimit("/api/rain"); got != 15 {
+		t.Errorf("rain limit %d, want 15", got)
+	}
+}
