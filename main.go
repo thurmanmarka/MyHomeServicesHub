@@ -151,6 +151,10 @@ func main() {
 	http.HandleFunc("/wifi", proxyWithAuth("http://localhost:8084/"))
 	http.HandleFunc("/wifi/", proxyWithAuth("http://localhost:8084/"))
 
+	// MyVacControl routes
+	http.HandleFunc("/vac", proxyWithAuth("http://localhost:8085/"))
+	http.HandleFunc("/vac/", proxyWithAuth("http://localhost:8085/"))
+
 	// Start cleanup of expired sessions
 	go cleanupSessions()
 
@@ -786,6 +790,8 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 			targetPath = strings.TrimPrefix(r.URL.Path, "/woo")
 		case strings.HasPrefix(r.URL.Path, "/wifi/") || r.URL.Path == "/wifi":
 			targetPath = strings.TrimPrefix(r.URL.Path, "/wifi")
+		case strings.HasPrefix(r.URL.Path, "/vac/") || r.URL.Path == "/vac":
+			targetPath = strings.TrimPrefix(r.URL.Path, "/vac")
 		default:
 			targetPath = r.URL.Path
 		}
