@@ -155,6 +155,10 @@ func main() {
 	http.HandleFunc("/vac", proxyWithAuth("http://localhost:8085/"))
 	http.HandleFunc("/vac/", proxyWithAuth("http://localhost:8085/"))
 
+	// MyThermostat routes
+	http.HandleFunc("/hvac", proxyWithAuth("http://localhost:8086/"))
+	http.HandleFunc("/hvac/", proxyWithAuth("http://localhost:8086/"))
+
 	// Start cleanup of expired sessions
 	go cleanupSessions()
 
@@ -792,6 +796,8 @@ func proxyWithAuth(targetURL string) http.HandlerFunc {
 			targetPath = strings.TrimPrefix(r.URL.Path, "/wifi")
 		case strings.HasPrefix(r.URL.Path, "/vac/") || r.URL.Path == "/vac":
 			targetPath = strings.TrimPrefix(r.URL.Path, "/vac")
+		case strings.HasPrefix(r.URL.Path, "/hvac/") || r.URL.Path == "/hvac":
+			targetPath = strings.TrimPrefix(r.URL.Path, "/hvac")
 		default:
 			targetPath = r.URL.Path
 		}
